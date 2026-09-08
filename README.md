@@ -1,60 +1,66 @@
 # Glyph
 
-Édition de texte réelle dans un PDF : le contenu cliqué est réécrit dans le flux du document (redaction PyMuPDF), pas recouvert par un calque. Le texte d'origine est supprimé, pas juste masqué.
+Glyph edits text directly inside a PDF's content stream instead of drawing a patch on top of it. When you edit a paragraph, the original glyphs are actually removed (via PDF redaction) and the new text is re-inserted in their place — not covered by a white rectangle with new text stacked over it.
 
-Frontend Next.js (App Router) : page marketing statique optimisée SEO sur `/`, éditeur interactif sur `/editor`.
+It's a small, focused, open-source tool: no accounts, no cloud storage, no tracking. Everything runs locally — your PDF stays in server memory for the duration of your session and is never written to disk.
 
-**Documentation technique** : [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) (comment les deux moitiés du projet s'articulent), [`docs/API.md`](./docs/API.md) (référence des routes backend), [`docs/DECISIONS.md`](./docs/DECISIONS.md) (pourquoi le moteur d'édition est fait comme il est fait — les bugs réels rencontrés et pourquoi chaque détour existe).
+## How it works
 
-## Démarrer
+1. Open a PDF (uploaded to the local backend, kept in memory only).
+2. Click a paragraph or table cell — an editor appears exactly where the text is.
+3. Change the text and save.
+4. The backend removes the original glyphs (real redaction, not an overlay) and re-inserts the new text using the original font if it covers all the needed characters, or a close system font with metric compensation otherwise (you'll see a warning banner when that happens).
+5. Undo/redo walk through the document's version history (kept server-side).
+6. Download the result whenever you like.
 
-Backend (Python/FastAPI/PyMuPDF) :
+## Getting started
+
+Backend (Python / FastAPI / PyMuPDF):
 
 ```bash
 cd backend
-python3 -m venv .venv        # une seule fois
-.venv/bin/pip install -r requirements.txt   # une seule fois
+python3 -m venv .venv        # once
+.venv/bin/pip install -r requirements.txt   # once
 .venv/bin/uvicorn app.main:app --port 8000 --reload
 ```
 
-Frontend (Next.js, proxy `/api` vers le backend via `next.config.ts`) :
+Frontend (Next.js, proxies `/api` to the backend via `next.config.ts`):
 
 ```bash
 npm install
 npm run dev
 ```
 
-Ouvre http://localhost:3000 (page d'accueil) ou http://localhost:3000/editor (outil directement).
+Open <http://localhost:3000/editor>.
 
-## Fonctionnement
+## Project structure
 
-1. Ouvre un PDF (envoyé au backend, gardé en mémoire process, jamais écrit sur disque).
-2. Clique sur un paragraphe ou une cellule : un éditeur apparaît à sa place exacte.
-3. Modifie le texte, Enregistrer.
-4. Le backend supprime réellement les glyphes d'origine (redaction PyMuPDF, pas un rectangle de couverture) et réinsère le nouveau texte avec la police d'origine si elle couvre tous les caractères nécessaires, sinon une police système proche avec compensation métrique (bandeau d'avertissement affiché dans ce cas).
-5. Annuler/Rétablir naviguent dans l'historique de versions du document (côté serveur).
-6. Télécharge le PDF à tout moment.
-
-## SEO
-
-- `/` est un composant serveur statique (SSG) : HTML complet dès la première réponse, `/editor` (l'outil) est en `noindex, follow` pour ne pas concurrencer la page d'accueil dans les résultats de recherche.
-- Métadonnées : Open Graph + Twitter Card, image OG générée (`app/opengraph-image.tsx`), JSON-LD `Organization` (layout), `SoftwareApplication` + `FAQPage` (page d'accueil).
-- `app/sitemap.ts` et `app/robots.ts` génèrent `/sitemap.xml` et `/robots.txt`.
-- `NEXT_PUBLIC_SITE_URL` (variable d'environnement) fixe l'URL canonique une fois un vrai domaine en place — sans elle, un placeholder (`https://glyph.app`) est utilisé.
-- Polices auto-hébergées via `next/font/google` (pas de requête bloquante vers Google Fonts).
-
-## Structure
-
-```
-app/            # routes Next.js (page d'accueil, /editor, sitemap, robots, OG image)
-components/     # PdfPage (rendu + édition), EditorApp (écran outil), BrandMark
-lib/            # client API, types partagés, config pdf.js
-backend/        # FastAPI + PyMuPDF (moteur d'édition, inchangé)
+```text
+app/            # Next.js routes (home page, /editor, sitemap, robots, OG image)
+components/     # PdfPage (render + edit), EditorApp (editor screen), BrandMark
+lib/            # API client, shared types, pdf.js setup
+backend/        # FastAPI + PyMuPDF (the actual editing engine)
 ```
 
-## Limites connues de ce premier jalon
+## Documentation
 
-- **Réutilisation de la police d'origine** : ne fonctionne que si elle expose un cmap Unicode exploitable. La plupart des PDF générés par Word/imprimante virtuelle embarquent leurs polices en sous-ensembles Identity-H sans cmap — dans ce cas (très fréquent), Glyph tente une police système du même nom (ex. Arial Narrow), sinon une police système générique proche, avec compensation métrique pour garder la même largeur visuelle.
-- **Débordement de bloc** : un paragraphe multi-lignes peut s'agrandir vers le bas si le nouveau texte est plus long ; une cellule de tableau (une seule ligne) ne grandit jamais — la police est réduite si besoin pour ne jamais empiéter sur la ligne ou la colonne voisine.
-- **Fonds colorés** : la redaction retire tout contenu (y compris un éventuel remplissage vectoriel) dans la zone éditée — un bloc de texte sur fond coloré perdrait ce fond. Non rencontré sur les blocs de texte courants (dates, noms, paragraphes), mais à garder en tête pour des tableaux avec cellules éditables colorées.
-- Pas de shaping HarfBuzz avancé, pas de RTL/CJK, pas de rotation de page — hors périmètre de ce premier jalon (édition de texte). Signatures, formes, formulaires et OCR ne sont pas encore implémentés.
+- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — how the frontend and backend fit together.
+- [`docs/API.md`](./docs/API.md) — backend route reference.
+- [`docs/DECISIONS.md`](./docs/DECISIONS.md) — the real bugs behind the editing engine's design choices, and why each workaround exists. Good starting point before touching `pdf_engine.py`.
+
+## Known limitations
+
+- **Reusing the original font** only works if it exposes a usable Unicode cmap. Most PDFs produced by Word or a virtual printer embed subsetted Identity-H fonts without one — in that (very common) case, Glyph falls back to a system font with the same name (e.g. Arial Narrow), or a generic system font otherwise, with metric compensation to preserve the original visual width.
+- **Block overflow**: a multi-line paragraph can grow downward if the new text is longer; a table cell (single line) never grows — its font size is reduced instead, so it never overlaps a neighboring row or column.
+- **Colored backgrounds**: redaction clears everything in the edited area, including any vector fill behind the text. Not an issue for typical text blocks (names, dates, paragraphs), but worth knowing if you're editing colored table cells.
+- No advanced text shaping (HarfBuzz), no RTL/CJK support, no page rotation — out of scope for now. Signatures, form fields, shapes, and OCR aren't implemented yet.
+- The system-font fallback currently only looks in macOS's font directory; running the backend on Linux/Windows will skip that fallback tier (see `docs/DECISIONS.md`).
+- No automated test suite yet — `backend/smoke_test.py` is a manual verification script, not CI.
+
+## Contributing
+
+Issues and pull requests are welcome. If you're planning a non-trivial change to the editing engine, reading `docs/DECISIONS.md` first will save you from re-discovering bugs that are already worked around.
+
+## License
+
+[MIT](./LICENSE)
