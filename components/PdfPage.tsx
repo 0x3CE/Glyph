@@ -6,7 +6,7 @@ import type { PDFPageProxy } from "pdfjs-dist";
 import "../lib/pdf-setup";
 import { editBlock, fetchDocumentBytes, getPageStructure } from "../lib/api-client";
 import type { Block } from "../lib/types";
-import { FLAG_BOLD, FLAG_ITALIC, colorIntToCss, fontFamilyForFlags } from "../lib/types";
+import { FLAG_BOLD, FLAG_ITALIC, fontFamilyForFlags } from "../lib/types";
 
 interface PdfPageProps {
   documentId: string;
@@ -172,7 +172,12 @@ export function PdfPage({ documentId, pageIndex, version, scale, onEdited }: Pdf
                   fontFamily: fontFamilyForFlags(span.flags),
                   fontWeight: span.flags & FLAG_BOLD ? "bold" : "normal",
                   fontStyle: span.flags & FLAG_ITALIC ? "italic" : "normal",
-                  color: colorIntToCss(span.color),
+                  // Always readable in the editor regardless of the
+                  // original text color (e.g. white text on a colored PDF
+                  // background would be invisible on the textarea's white
+                  // background otherwise) -- purely a UI choice, the
+                  // backend still reinserts the ORIGINAL color untouched.
+                  color: "#111111",
                 }}
                 value={editing.draft}
                 disabled={editing.saving}

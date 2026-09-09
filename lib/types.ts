@@ -41,13 +41,6 @@ export const FLAG_SERIF = 1 << 2;
 export const FLAG_MONOSPACE = 1 << 3;
 export const FLAG_BOLD = 1 << 4;
 
-export function colorIntToCss(color: number): string {
-  const r = (color >> 16) & 255;
-  const g = (color >> 8) & 255;
-  const b = color & 255;
-  return `rgb(${r}, ${g}, ${b})`;
-}
-
 export function fontFamilyForFlags(flags: number): string {
   if (flags & FLAG_MONOSPACE) return "'Courier New', monospace";
   if (flags & FLAG_SERIF) return "Georgia, 'Times New Roman', serif";
