@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pymupdf
 
+import app.pdf_engine as pdf_engine
 from app.pdf_engine import Block, Line, Span, apply_block_edit, extract_structure
 
 
@@ -243,6 +244,61 @@ class ApplyBlockEditSafetyTests(unittest.TestCase):
         self.assertEqual(text.count("6"), 0, "a leftover glyph from the original text survived the edit")
         self.assertIn("310 12 47 5907959789 3", text)
         self.assertIn("2", text)
+
+
+class BundledFontFallbackTests(unittest.TestCase):
+    """The backend deploys to Linux (Render), which has none of the
+    macOS-only system fonts `_SYSTEM_FAMILIES` names -- these pin down that
+    the bundled Liberation Fonts (`app/fonts/liberation/`, SIL OFL) are used
+    correctly in that case, since silently falling all the way back to
+    Base-14 Helvetica/Times would lose the Euro sign and other characters
+    (see docs/DECISIONS.md)."""
+
+    def setUp(self):
+        # Simulate running without macOS's system fonts, regardless of the
+        # platform actually running this test.
+        self._real_system_font_dir = pdf_engine._SYSTEM_FONT_DIR
+        pdf_engine._SYSTEM_FONT_DIR = Path("/nonexistent-on-purpose")
+
+    def tearDown(self):
+        pdf_engine._SYSTEM_FONT_DIR = self._real_system_font_dir
+
+    def test_bundled_fonts_exist_on_disk(self):
+        for filename in {
+            f
+            for family in pdf_engine._BUNDLED_FAMILIES.values()
+            for f in family.values()
+        }:
+            path = pdf_engine._BUNDLED_FONT_DIR / filename
+            self.assertTrue(path.is_file(), f"missing bundled font: {path}")
+
+    def test_named_family_falls_back_to_bundled_font(self):
+        self.assertEqual(
+            pdf_engine._system_font_path("arial", False, False),
+            str(pdf_engine._BUNDLED_FONT_DIR / "LiberationSans-Regular.ttf"),
+        )
+        self.assertEqual(
+            pdf_engine._system_font_path("times new roman", True, True),
+            str(pdf_engine._BUNDLED_FONT_DIR / "LiberationSerif-BoldItalic.ttf"),
+        )
+        self.assertIsNone(pdf_engine._system_font_path("comic sans", False, False))
+
+    def test_euro_sign_and_typographic_punctuation_survive_the_fallback(self):
+        doc, page = _page(width=400)
+        page.insert_text((40, 50), "Montant : 100 EUR", fontsize=11, fontname="helv")
+        blocks = extract_structure(page)
+        # Force a non-bundled original font name so pick_font must go
+        # through the named-family alias -> bundled-font path.
+        block = blocks[0]
+        original_span = block.lines[0].spans[0]
+        block.lines[0].spans[0] = Span(
+            **{**original_span.__dict__, "font": "ArialMT"},
+        )
+
+        apply_block_edit(doc, page, block, "Montant : 1 234,56 € — «Test»", all_blocks=blocks)
+        text = page.get_text()
+        self.assertIn("€", text)
+        self.assertIn("«Test»", text)
 
 
 if __name__ == "__main__":

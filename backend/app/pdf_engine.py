@@ -53,11 +53,23 @@ def _base14_for(flags: int) -> str:
 
 # PyMuPDF's built-in Base-14 fonts are a last resort only: they lack basic
 # glyphs a lot of real documents actually need (the Euro sign among them --
-# a substituted amount silently rendered as "?"). Real system font files
-# (present on any Mac) cover far more of Unicode, including Euro, and often
-# let us match the ORIGINAL font family by name (e.g. "ArialNarrow" in the
-# PDF -> the real Arial Narrow.ttf) instead of a generic Helvetica -- much
-# closer to the original than a Base-14 alias would ever be.
+# a substituted amount silently rendered as "?"). Real font files cover far
+# more of Unicode, including Euro, and often let us match the ORIGINAL font
+# family by name (e.g. "ArialNarrow" in the PDF -> a real Arial Narrow) --
+# much closer to the original than a Base-14 alias would ever be.
+#
+# Two tiers, tried in order (see `_system_font_path`): the exact
+# proprietary font if this happens to be running on macOS (which ships
+# Arial/Times/Courier/etc. -- never true on the Linux server this also
+# deploys to), then the bundled Liberation Fonts (SIL OFL, `fonts/liberation/`)
+# as a family that's ALWAYS present regardless of OS. Liberation Sans/
+# Serif/Mono are metrically identical, glyph-for-glyph advance width, to
+# Arial/Times New Roman/Courier New respectively -- that's their whole
+# purpose -- so even the fallback tier reflows text the same way the real
+# font would have. There's no bundled substitute for Arial Narrow's actual
+# condensed metrics, or for Georgia/Verdana/Tahoma's specific designs, so
+# those degrade to the closest bundled family (still strictly better than
+# jumping straight to Base-14 Helvetica/Times).
 _SYSTEM_FONT_DIR = Path("/System/Library/Fonts/Supplemental")
 
 _SYSTEM_FAMILIES: dict[str, dict[tuple[bool, bool], str]] = {
@@ -103,6 +115,37 @@ _SYSTEM_FAMILIES: dict[str, dict[tuple[bool, bool], str]] = {
         (False, True): "Tahoma.ttf",
         (True, True): "Tahoma Bold.ttf",
     },
+}
+
+_BUNDLED_FONT_DIR = Path(__file__).resolve().parent / "fonts" / "liberation"
+
+_LIBERATION_SANS = {
+    (False, False): "LiberationSans-Regular.ttf",
+    (True, False): "LiberationSans-Bold.ttf",
+    (False, True): "LiberationSans-Italic.ttf",
+    (True, True): "LiberationSans-BoldItalic.ttf",
+}
+_LIBERATION_SERIF = {
+    (False, False): "LiberationSerif-Regular.ttf",
+    (True, False): "LiberationSerif-Bold.ttf",
+    (False, True): "LiberationSerif-Italic.ttf",
+    (True, True): "LiberationSerif-BoldItalic.ttf",
+}
+_LIBERATION_MONO = {
+    (False, False): "LiberationMono-Regular.ttf",
+    (True, False): "LiberationMono-Bold.ttf",
+    (False, True): "LiberationMono-Italic.ttf",
+    (True, True): "LiberationMono-BoldItalic.ttf",
+}
+
+_BUNDLED_FAMILIES: dict[str, dict[tuple[bool, bool], str]] = {
+    "arial": _LIBERATION_SANS,
+    "arial narrow": _LIBERATION_SANS,  # no condensed metrics bundled, but still Unicode-complete
+    "verdana": _LIBERATION_SANS,
+    "tahoma": _LIBERATION_SANS,
+    "times new roman": _LIBERATION_SERIF,
+    "georgia": _LIBERATION_SERIF,
+    "courier new": _LIBERATION_MONO,
 }
 
 # Fonts that don't exist as a real file on this system get mapped to the
@@ -151,14 +194,17 @@ def _generic_family_for_flags(flags: int) -> str:
 
 
 def _system_font_path(family: str, bold: bool, italic: bool) -> str | None:
-    variants = _SYSTEM_FAMILIES.get(family)
-    if not variants:
-        return None
-    filename = variants.get((bold, italic)) or variants.get((False, False))
-    if not filename:
-        return None
-    path = _SYSTEM_FONT_DIR / filename
-    return str(path) if path.is_file() else None
+    for font_dir, families in ((_SYSTEM_FONT_DIR, _SYSTEM_FAMILIES), (_BUNDLED_FONT_DIR, _BUNDLED_FAMILIES)):
+        variants = families.get(family)
+        if not variants:
+            continue
+        filename = variants.get((bold, italic)) or variants.get((False, False))
+        if not filename:
+            continue
+        path = font_dir / filename
+        if path.is_file():
+            return str(path)
+    return None
 
 
 def rgb_int_to_tuple(color: int) -> tuple[float, float, float]:

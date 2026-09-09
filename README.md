@@ -45,6 +45,27 @@ Both sides read a few optional environment variables — useful once you deploy 
 | `SANDBOX_MAX_MEMORY_MB` / `SANDBOX_MAX_CPU_SECONDS` / `SANDBOX_TIMEOUT_SECONDS` | backend | `512` / `8` / `15` | Limits applied to the isolated subprocess that parses each PDF (see below). |
 | `NEXT_PUBLIC_SITE_URL` | frontend | placeholder | Canonical URL used for SEO metadata once you have a real domain. |
 
+## Deployment
+
+Frontend and backend deploy as two separate services — there's no requirement to use these specific providers, but this is the tested path:
+
+**Backend on [Render](https://render.com)**, from `backend/Dockerfile`:
+
+1. New Web Service → connect this repo → Render picks up `render.yaml` (Blueprint) automatically, or point it at `backend/Dockerfile` manually if you'd rather configure it by hand.
+2. Set `ALLOWED_ORIGINS` to your Vercel URL once you have it (step below) — the placeholder in `render.yaml` is intentionally left blank.
+3. Note the resulting service URL (`https://<something>.onrender.com`).
+
+**Frontend on [Vercel](https://vercel.com)**, zero-config for Next.js:
+
+1. New Project → import this repo (Vercel auto-detects Next.js, no build settings to change).
+2. Set the `BACKEND_URL` environment variable to the Render URL from above.
+3. Optionally set `NEXT_PUBLIC_SITE_URL` to your Vercel/custom domain once you have one, for correct SEO metadata.
+4. Redeploy after setting env vars (Vercel doesn't hot-reload them into a running build).
+
+Then go back to Render and set `ALLOWED_ORIGINS` to the Vercel URL from step 2, so the backend's CORS allowlist matches — the two services reference each other's URLs, so the first deploy of each will need one follow-up env var update once the other's URL is known.
+
+The backend has no database and keeps everything in the web service's own memory (see `docs/ARCHITECTURE.md`) — Render's free/starter tiers that spin a service down on idle will lose all in-progress documents on the next cold start. Fine for the tool's intended use (open a PDF, edit it, download it, done), not a place to expect long-lived state.
+
 ## Project structure
 
 ```text

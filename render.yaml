@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: glyph-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: starter
+    envVars:
+      - key: ALLOWED_ORIGINS
+        sync: false # set to your deployed frontend URL, e.g. https://glyph.vercel.app
+      - key: MAX_UPLOAD_MB
+        value: "20"
+      - key: SANDBOX_MAX_MEMORY_MB
+        value: "512"
+      - key: SANDBOX_MAX_CPU_SECONDS
+        value: "8"
+      - key: SANDBOX_TIMEOUT_SECONDS
+        value: "15"
