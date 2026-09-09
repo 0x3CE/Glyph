@@ -203,28 +203,6 @@ class Block:
         return max(spans, key=lambda s: len(s.text))
 
 
-def _spread(values: list[float]) -> float:
-    return max(values) - min(values) if values else 0.0
-
-
-def _is_coherent_paragraph(lines: list[Line]) -> bool:
-    """PyMuPDF's block detector clusters purely by vertical proximity, with
-    no notion of table columns -- a table row (or a whole table body) can
-    end up as a single "block" whose lines are actually unrelated cells
-    sitting at wildly different x-positions. A genuine wrapped paragraph's
-    lines all start near the same left edge (or, for right/justified text,
-    end near the same right edge); a merged table doesn't. One line is
-    trivially coherent (nothing to confuse it with).
-    """
-    if len(lines) <= 1:
-        return True
-    sizes = [s.size for line in lines for s in line.spans] or [10.0]
-    threshold = max(15.0, (sum(sizes) / len(sizes)) * 1.5)
-    x0s = [line.bbox[0] for line in lines]
-    x1s = [line.bbox[2] for line in lines]
-    return _spread(x0s) <= threshold or _spread(x1s) <= threshold
-
-
 def _line_from_raw(line: dict) -> Line:
     return Line(
         bbox=tuple(line["bbox"]),
@@ -243,24 +221,83 @@ def _line_from_raw(line: dict) -> Line:
     )
 
 
+@dataclass
+class StructureResult:
+    width: float
+    height: float
+    blocks: list[Block]
+
+
+class EncryptedPdfError(Exception):
+    """Raised at upload time for a password-protected PDF. PyMuPDF happily
+    opens one and reports a page count without a password, but every real
+    operation on it (get_text, redaction, ...) then fails with an opaque
+    "document closed or encrypted" error -- catching it here instead gives
+    the user an actionable message right away instead of a confusing
+    failure the first time they try to click a field."""
+
+
+def worker_validate_pdf(raw: bytes) -> int:
+    """Isolation worker (see isolation.run_isolated): opening bytes nobody
+    here produced is the single highest-risk operation in this app."""
+    doc = pymupdf.open(stream=raw, filetype="pdf")
+    if doc.needs_pass:
+        raise EncryptedPdfError("password-protected PDFs are not supported -- please remove the password first")
+    return doc.page_count
+
+
+def worker_extract_structure(pdf_bytes: bytes, page_index: int) -> StructureResult:
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    if not (0 <= page_index < doc.page_count):
+        raise IndexError("page not found")
+    page = doc[page_index]
+    return StructureResult(width=page.rect.width, height=page.rect.height, blocks=extract_structure(page))
+
+
+def worker_apply_edit(
+    pdf_bytes: bytes, page_index: int, block_id: str, new_text: str
+) -> tuple[bytes, bool, tuple[float, float, float, float]]:
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    if not (0 <= page_index < doc.page_count):
+        raise IndexError("page not found")
+    page = doc[page_index]
+    blocks = extract_structure(page)
+    block = next((b for b in blocks if b.id == block_id), None)
+    if block is None:
+        raise LookupError("block not found")
+
+    substituted, new_bbox = apply_block_edit(doc, page, block, new_text, all_blocks=blocks)
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue(), substituted, new_bbox
+
+
 def extract_structure(page: pymupdf.Page) -> list[Block]:
+    """One PyMuPDF text line = one editable block, always -- no attempt to
+    merge multiple lines into a reflow-capable paragraph. See
+    docs/DECISIONS.md ("Édition strictement ligne par ligne") for why: a
+    merge heuristic based on shared edges/alignment kept finding new real
+    documents where independent lines (a title stacked on a subtitle, a
+    right-aligned column of unrelated values) coincidentally look just like
+    a wrapped paragraph, and merging them let one edit corrupt an unrelated
+    line. Per-line editing is immune to that entire bug class by
+    construction, at the cost of needing several clicks for a field that
+    visually spans multiple lines (e.g. an address).
+
+    This also gets "two runs on the same visual line but far apart
+    horizontally should be separate fields" for free: PyMuPDF's own line
+    segmentation already starts a new line for a gap around one font-size
+    or more (verified empirically), well below anything meant to look like
+    deliberate separate fields (e.g. a form's "Label :        VALUE").
+    """
     raw = page.get_text("dict")
     blocks: list[Block] = []
     for i, b in enumerate(raw["blocks"]):
         if b.get("type") != 0:
             continue  # skip image blocks
         lines = [_line_from_raw(line) for line in b["lines"]]
-        lines = [line for line in lines if line.spans]
-        if not lines:
-            continue
-
-        if _is_coherent_paragraph(lines):
-            blocks.append(Block(id=f"b{i}", bbox=tuple(b["bbox"]), lines=lines))
-        else:
-            # Not a paragraph (most likely several table cells/columns that
-            # MuPDF merged because they're vertically close) -- edit each
-            # line independently instead of the whole merged region.
-            for j, line in enumerate(lines):
+        for j, line in enumerate(lines):
+            if line.spans:
                 blocks.append(Block(id=f"b{i}l{j}", bbox=line.bbox, lines=[line]))
     return blocks
 
@@ -366,11 +403,102 @@ def _metric_match_scale(span: Span, font_choice: FontChoice) -> float:
     return min(1.4, max(0.6, scale))
 
 
+def _sibling_bound(block: Block, all_blocks: list[Block], edge: str) -> float | None:
+    """The nearest boundary imposed by a sibling block that overlaps this
+    one along the perpendicular axis -- how far this block's redaction (or
+    downward growth) may extend on the given `edge` ("top"/"bottom"/
+    "left"/"right") before it would start eating a neighbor's content.
+
+    Needed because two adjacent blocks' own tight bboxes can already
+    overlap by a couple points in real documents -- tight line leading
+    vertically, tightly-packed table columns horizontally -- even though
+    the actual rendered ink doesn't visually overlap. Since redaction
+    removes an entire intersecting glyph run, not just the overlapping
+    pixels, even that small an overlap is enough to erase a neighbor
+    entirely. Two real bugs came from the vertical case alone: editing a
+    title line erased the line below it, and (mirrored) editing a subtitle
+    line erased the title stacked above it. The horizontal case is the
+    same risk applied to a row of side-by-side table cells.
+
+    A candidate only counts as "the next one over" on `edge` if it starts
+    within a small tolerance of this block's own opposite edge -- not
+    merely "somewhere further along that axis". Without that distinction,
+    a short line stacked with tight leading between two others (real case:
+    a lone "2" between a long reference number and a date, in a 3-row
+    value column) perpendicularly overlaps EVERY line near it and would
+    wrongly count as a horizontal neighbor of the date line below it, even
+    though almost its entire width sits nested inside the date's own span,
+    not beside it. The tolerance scales with the smaller of the two
+    blocks' own extent on this axis, since the overlaps this guards
+    against (tight leading/kerning) are a small fraction of a line's own
+    size, not a large one.
+    """
+    x0, y0, x1, y1 = block.bbox
+
+    def not_too_nested(this_extent: float, other_extent: float, gap: float) -> bool:
+        # gap is the signed distance from this block's edge to the
+        # candidate's near edge: positive means a real separating space
+        # (always fine, however large -- e.g. genuine whitespace before
+        # the next paragraph), negative means overlap. Only reject when
+        # the OVERLAP is more than half of the smaller block's own extent
+        # on this axis -- i.e. when the "neighbor" is mostly nested inside
+        # this block's own span rather than merely touching its edge.
+        tolerance = 0.5 * min(this_extent, other_extent)
+        return gap >= -tolerance
+
+    if edge == "bottom":
+        height = max(y1 - y0, 1.0)
+        candidates = [
+            o.bbox[1]
+            for o in all_blocks
+            if o is not block
+            and o.bbox[1] > y0
+            and min(x1, o.bbox[2]) - max(x0, o.bbox[0]) > 0
+            and not_too_nested(height, max(o.bbox[3] - o.bbox[1], 1.0), o.bbox[1] - y1)
+        ]
+        return min(candidates) if candidates else None
+    if edge == "top":
+        height = max(y1 - y0, 1.0)
+        candidates = [
+            o.bbox[3]
+            for o in all_blocks
+            if o is not block
+            and o.bbox[3] < y1
+            and min(x1, o.bbox[2]) - max(x0, o.bbox[0]) > 0
+            and not_too_nested(height, max(o.bbox[3] - o.bbox[1], 1.0), y0 - o.bbox[3])
+        ]
+        return max(candidates) if candidates else None
+    if edge == "right":
+        width = max(x1 - x0, 1.0)
+        candidates = [
+            o.bbox[0]
+            for o in all_blocks
+            if o is not block
+            and o.bbox[0] > x0
+            and min(y1, o.bbox[3]) - max(y0, o.bbox[1]) > 0
+            and not_too_nested(width, max(o.bbox[2] - o.bbox[0], 1.0), o.bbox[0] - x1)
+        ]
+        return min(candidates) if candidates else None
+    if edge == "left":
+        width = max(x1 - x0, 1.0)
+        candidates = [
+            o.bbox[2]
+            for o in all_blocks
+            if o is not block
+            and o.bbox[2] < x1
+            and min(y1, o.bbox[3]) - max(y0, o.bbox[1]) > 0
+            and not_too_nested(width, max(o.bbox[2] - o.bbox[0], 1.0), x0 - o.bbox[2])
+        ]
+        return max(candidates) if candidates else None
+    raise ValueError(edge)
+
+
 def apply_block_edit(
     doc: pymupdf.Document,
     page: pymupdf.Page,
     block: Block,
     new_text: str,
+    all_blocks: list[Block] | None = None,
 ) -> tuple[bool, tuple[float, float, float, float]]:
     """Redacts the block's original glyphs and reinserts new_text.
 
@@ -396,33 +524,55 @@ def apply_block_edit(
     block_width = max(x1 - x0, 10.0)
     lines = new_text.split("\n")
 
-    # Anchor on the ORIGINAL first line's exact baseline (PyMuPDF gives us
-    # this directly as `origin`) rather than estimating one from the bbox
-    # top -- an estimate that was consistently a couple points off, enough
-    # to visibly lift short table-cell text off its row. Line spacing is
-    # likewise measured baseline-to-baseline between the original lines,
-    # the correct typographic distance (bbox-top-to-bbox-top isn't, because
-    # ascender height varies).
+    # Anchor on the ORIGINAL line's exact baseline (PyMuPDF gives us this
+    # directly as `origin`) rather than estimating one from the bbox top --
+    # an estimate that was consistently a couple points off, enough to
+    # visibly lift short table-cell text off its row. A block is always
+    # exactly one original PyMuPDF line (see extract_structure): the
+    # per-line spacing below is only for the case where the user's OWN new
+    # text has more lines than that -- e.g. typing a manual line break into
+    # a field that was originally one line -- and is otherwise a
+    # deliberately rough estimate since there's no original spacing to
+    # measure it from.
     first_origin = block.lines[0].spans[0].origin
-    if len(block.lines) > 1:
-        origins_y = [line.spans[0].origin[1] for line in block.lines if line.spans]
-        diffs = [b - a for a, b in zip(origins_y, origins_y[1:]) if b > a]
-        line_height = (sum(diffs) / len(diffs)) if diffs else span.size * 1.2
-    else:
-        line_height = max(y1 - y0, span.size * 1.2)
+    line_height = max(y1 - y0, span.size * 1.2)
 
     try:
+        # Neighbor bounds on all four sides -- computed once, up front, so
+        # both the shrink-to-fit width and the redaction rectangle respect
+        # the same safe area. Without a sibling on a given side, the bound
+        # is None and that side is left at the block's own natural edge.
+        next_top = _sibling_bound(block, all_blocks, "bottom") if all_blocks else None
+        prev_bottom = _sibling_bound(block, all_blocks, "top") if all_blocks else None
+        next_left = _sibling_bound(block, all_blocks, "right") if all_blocks else None
+        prev_right = _sibling_bound(block, all_blocks, "left") if all_blocks else None
+
+        redact_left = x0
+        if prev_right is not None and prev_right > redact_left:
+            redact_left = min(prev_right + 0.25, x0 + block_width - 1.0)
+        redact_right = x0 + block_width
+        if next_left is not None:
+            redact_right = min(redact_right, max(next_left - 0.25, redact_left + 1.0))
+        safe_width = max(redact_right - redact_left, 1.0)
+
         fontsize = span.size
         # Shrink to fit width instead of growing the box: growing sideways
         # risks spilling into the next table column.
         for _attempt in range(6):
             widest = max((_measure(line, font_choice, fontsize) for line in lines), default=0.0)
-            if widest * scale_x <= block_width * 1.05 or fontsize < span.size * 0.5:
+            if widest * scale_x <= safe_width * 1.05 or fontsize < span.size * 0.5:
                 break
             fontsize *= 0.9
 
         needed_height = max(y1 - y0, line_height * len(lines))
-        page.add_redact_annot(pymupdf.Rect(x0, y0, x0 + block_width, y0 + needed_height), fill=None)
+        if next_top is not None:
+            needed_height = min(needed_height, max(next_top - y0 - 0.25, 1.0))
+
+        redact_top = y0
+        if prev_bottom is not None and prev_bottom > redact_top:
+            redact_top = min(prev_bottom + 0.25, y0 + needed_height - 1.0)
+
+        page.add_redact_annot(pymupdf.Rect(redact_left, redact_top, redact_right, y0 + needed_height), fill=None)
         page.apply_redactions()
 
         morph = (pymupdf.Point(x0, y0), pymupdf.Matrix(scale_x, 1)) if scale_x != 1.0 else None

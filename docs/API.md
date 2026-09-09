@@ -15,7 +15,7 @@ Upload un PDF. Corps : `multipart/form-data`, champ `file`.
 { "document_id": "34ca6796213f49efb648acc326c472d0", "page_count": 3 }
 ```
 
-`400` si le fichier n'est pas un PDF valide (PyMuPDF n'a pas pu l'ouvrir).
+`400` si le fichier n'est pas un PDF valide (échec d'ouverture, protégé par mot de passe, ou parsing tué par la sandbox — timeout/mémoire/CPU, voir [`DECISIONS.md`](./DECISIONS.md#isoler-le-parsing-pdf-dans-un-sous-processus)). `413` si le fichier dépasse `MAX_UPLOAD_MB` (20 Mo par défaut).
 
 ---
 
@@ -36,7 +36,7 @@ Renvoie les bytes du PDF **courant** (celui pointé par le curseur d'historique 
   "height": 841.89,
   "blocks": [
     {
-      "id": "b9",                 // valable UNIQUEMENT pour cette réponse (voir plus bas)
+      "id": "b9l0",                // valable UNIQUEMENT pour cette réponse (voir plus bas) -- une ligne PyMuPDF = un bloc, toujours
       "bbox": [311.8, 224.1, 387.5, 239.4],  // [x0, y0, x1, y1], origine en haut à gauche
       "text": "Lille, le 22/06/2026",
       "lines": [
@@ -70,7 +70,7 @@ Renvoie les bytes du PDF **courant** (celui pointé par le curseur d'historique 
 
 **⚠️ Les `id` de bloc ne sont pas stables entre deux appels.** Ils sont recalculés à chaque `GET .../structure` à partir de la position des blocs dans le document à cet instant (`b{index-de-bloc}` ou `b{index}l{index-de-ligne}` pour une ligne éclatée d'un bloc non-cohérent, voir [`DECISIONS.md`](./DECISIONS.md#regroupement-bloc-vs-ligne)). Toute édition qui précède change potentiellement la numérotation. **Toujours refaire un `GET .../structure` juste avant d'utiliser un `block_id`.**
 
-`404` si le document ou la page n'existe pas.
+`404` si le document ou la page n'existe pas. `422` si le traitement échoue dans la sandbox (timeout/mémoire/CPU, voir [`DECISIONS.md`](./DECISIONS.md#isoler-le-parsing-pdf-dans-un-sous-processus)).
 
 ---
 
@@ -78,12 +78,12 @@ Renvoie les bytes du PDF **courant** (celui pointé par le curseur d'historique 
 
 ```json
 // requête
-{ "text": "Lille, le 05/09/2026" }
+{ "text": "Lille, le 05/09/2026" }  // 5000 caractères max
 ```
 
 Un `\n` dans `text` crée une ligne supplémentaire (utile pour un bloc multi-lignes comme une adresse). Le backend :
 1. Redécoupe la structure de la page à la volée pour retrouver le bloc correspondant à `block_id` (`404` si introuvable — typiquement parce que l'id vient d'une structure périmée).
-2. Supprime réellement les glyphes d'origine du bloc et réinsère le nouveau texte (voir [`DECISIONS.md`](./DECISIONS.md) pour le détail du moteur).
+2. Supprime réellement les glyphes d'origine du bloc et réinsère le nouveau texte (voir [`DECISIONS.md`](./DECISIONS.md) pour le détail du moteur) — dans le sous-processus isolé, comme toute opération touchant le PDF.
 3. Empile le nouvel état du document dans l'historique (undo devient possible, redo est vidé).
 
 ```json
@@ -93,6 +93,8 @@ Un `\n` dans `text` crée une ligne supplémentaire (utile pour un bloc multi-li
   "new_bbox": [311.8, 224.1, 406.5, 244.9] // zone réellement occupée après édition
 }
 ```
+
+`422` si `text` dépasse 5000 caractères, ou si le traitement échoue dans la sandbox (timeout/mémoire/CPU). `404` si la page ou le bloc n'existe pas.
 
 ---
 

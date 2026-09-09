@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import io
+import os
 
-import pymupdf
 from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from . import documents
-from .pdf_engine import apply_block_edit, extract_structure
+from .isolation import SandboxError, run_isolated
+from .pdf_engine import worker_apply_edit, worker_extract_structure, worker_validate_pdf
 from .schemas import (
     BlockOut,
     EditRequest,
@@ -19,32 +20,38 @@ from .schemas import (
     UploadResponse,
 )
 
+MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "20")) * 1024 * 1024
+
+# Comma-separated list, e.g. "https://glyph.vercel.app,http://localhost:3000".
+_allowed_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000")
+ALLOWED_ORIGINS = [origin.strip() for origin in _allowed_origins.split(",") if origin.strip()]
+
 app = FastAPI(title="PDF Editor API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-def _open(document_id: str) -> tuple[documents.DocumentState, pymupdf.Document]:
-    state = documents.get(document_id)
-    if state is None:
-        raise HTTPException(404, "document not found")
-    doc = pymupdf.open(stream=state.current, filetype="pdf")
-    return state, doc
+def _sandbox_error_to_http(e: SandboxError, *, not_found: dict[str, str] | None = None) -> HTTPException:
+    if not_found and e.kind in not_found:
+        return HTTPException(404, not_found[e.kind])
+    return HTTPException(422, f"failed to process PDF: {e}")
 
 
 @app.post("/api/documents", response_model=UploadResponse)
 async def upload(file: UploadFile) -> UploadResponse:
     raw = await file.read()
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"file too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)")
     try:
-        doc = pymupdf.open(stream=raw, filetype="pdf")
-    except Exception as e:
+        page_count = await run_in_threadpool(run_isolated, worker_validate_pdf, raw)
+    except SandboxError as e:
         raise HTTPException(400, f"invalid PDF: {e}") from e
     document_id = documents.create(raw)
-    return UploadResponse(document_id=document_id, page_count=doc.page_count)
+    return UploadResponse(document_id=document_id, page_count=page_count)
 
 
 @app.get("/api/documents/{document_id}/file")
@@ -57,15 +64,17 @@ def download(document_id: str) -> Response:
 
 @app.get("/api/documents/{document_id}/pages/{page_index}/structure", response_model=PageStructure)
 def structure(document_id: str, page_index: int) -> PageStructure:
-    _state, doc = _open(document_id)
-    if not (0 <= page_index < doc.page_count):
-        raise HTTPException(404, "page not found")
-    page = doc[page_index]
-    blocks = extract_structure(page)
+    state = documents.get(document_id)
+    if state is None:
+        raise HTTPException(404, "document not found")
+    try:
+        result = run_isolated(worker_extract_structure, state.current, page_index)
+    except SandboxError as e:
+        raise _sandbox_error_to_http(e, not_found={"IndexError": "page not found"}) from e
     return PageStructure(
         page_index=page_index,
-        width=page.rect.width,
-        height=page.rect.height,
+        width=result.width,
+        height=result.height,
         blocks=[
             BlockOut(
                 id=b.id,
@@ -89,7 +98,7 @@ def structure(document_id: str, page_index: int) -> PageStructure:
                     for line in b.lines
                 ],
             )
-            for b in blocks
+            for b in result.blocks
         ],
     )
 
@@ -99,21 +108,19 @@ def structure(document_id: str, page_index: int) -> PageStructure:
     response_model=EditResponse,
 )
 def edit_block(document_id: str, page_index: int, block_id: str, body: EditRequest) -> EditResponse:
-    state, doc = _open(document_id)
-    if not (0 <= page_index < doc.page_count):
-        raise HTTPException(404, "page not found")
-    page = doc[page_index]
-    blocks = extract_structure(page)
-    block = next((b for b in blocks if b.id == block_id), None)
-    if block is None:
-        raise HTTPException(404, "block not found")
+    state = documents.get(document_id)
+    if state is None:
+        raise HTTPException(404, "document not found")
+    try:
+        new_pdf_bytes, substituted, new_bbox = run_isolated(
+            worker_apply_edit, state.current, page_index, block_id, body.text
+        )
+    except SandboxError as e:
+        raise _sandbox_error_to_http(
+            e, not_found={"IndexError": "page not found", "LookupError": "block not found"}
+        ) from e
 
-    substituted, new_bbox = apply_block_edit(doc, page, block, body.text)
-
-    buf = io.BytesIO()
-    doc.save(buf)
-    state.push(buf.getvalue())
-
+    state.push(new_pdf_bytes)
     return EditResponse(font_substituted=substituted, new_bbox=new_bbox)
 
 
