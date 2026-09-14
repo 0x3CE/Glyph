@@ -17,6 +17,7 @@ import io
 import re
 import tempfile
 import uuid
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -205,6 +206,84 @@ def _system_font_path(family: str, bold: bool, italic: bool) -> str | None:
         if path.is_file():
             return str(path)
     return None
+
+
+# A Type3 font (glyphs are arbitrary vector-drawing programs, no OS/2/name
+# table at all) gives `flags` no real weight information to read -- PyMuPDF
+# just reports 0, which looks identical to a genuinely non-bold font. Since
+# the glyphs ARE actually drawn on the page, we can measure their real
+# visual weight instead of guessing: render the original span, and render
+# the same text in each of these three weights of the same open-source
+# family (instanced from Google's variable-font release with
+# `fontTools.varLib.instancer`, SIL OFL, `fonts/opensans/`), then pick
+# whichever candidate's "ink ratio" (fraction of pixels that differ from
+# the surrounding background) is closest to the original's. Real bug this
+# fixes: a Type3-sourced light/thin custom typeface was silently replaced
+# by a much heavier default weight (see docs/DECISIONS.md).
+_OPENSANS_FONT_DIR = Path(__file__).resolve().parent / "fonts" / "opensans"
+_OPENSANS_WEIGHTS: dict[str, Path] = {
+    "light": _OPENSANS_FONT_DIR / "OpenSans-Light.ttf",
+    "regular": _OPENSANS_FONT_DIR / "OpenSans-Regular.ttf",
+    "bold": _OPENSANS_FONT_DIR / "OpenSans-Bold.ttf",
+}
+
+
+def _is_type3_font(font_name: str) -> bool:
+    return font_name.startswith("Type3")
+
+
+def _ink_ratio(page: pymupdf.Page, bbox: tuple[float, float, float, float]) -> float:
+    """Fraction of pixels in bbox that differ noticeably from the area's
+    own dominant (background) color -- self-calibrating to whatever
+    text/background color combination is actually there (white text on a
+    colored fill included), rather than assuming dark text on a light
+    page.
+    """
+    rect = pymupdf.Rect(*bbox)
+    if rect.width <= 0 or rect.height <= 0:
+        return 0.0
+    pix = page.get_pixmap(clip=rect, matrix=pymupdf.Matrix(4, 4))
+    stride = pix.n
+    samples = pix.samples
+    colors = [tuple(samples[i : i + 3]) for i in range(0, len(samples), stride)]
+    if not colors:
+        return 0.0
+    background = Counter(colors).most_common(1)[0][0]
+    ink = sum(1 for c in colors if sum((a - b) ** 2 for a, b in zip(c, background)) ** 0.5 > 40)
+    return ink / len(colors)
+
+
+def _ink_ratio_for_candidate(fontfile: Path, text: str, size: float) -> float:
+    doc = pymupdf.open()
+    page = doc.new_page(width=max(size * len(text), 100.0) + 20, height=size * 3)
+    width = pymupdf.Font(fontfile=str(fontfile)).text_length(text, fontsize=size)
+    baseline_y = size * 2.0
+    # Same fix as `pick_font`'s `unique` tag: MuPDF's font-resource cache is
+    # process-wide, not per-Document, so reusing a fixed name here across
+    # calls (even across separate throwaway Documents, and even across
+    # separate calls to `_closest_weight_by_ink` for the same edit) can
+    # silently reuse a PREVIOUSLY loaded candidate's font data instead of
+    # this one -- real bug: the Bold candidate's ink ratio got measured
+    # using a stale Light font, corrupting the whole comparison.
+    fontname = f"fref{uuid.uuid4().hex[:8]}"
+    page.insert_text((10, baseline_y), text, fontsize=size, fontname=fontname, fontfile=str(fontfile))
+    bbox = (10.0, baseline_y - size * 1.1, 10.0 + width + 5, baseline_y + size * 0.3)
+    return _ink_ratio(page, bbox)
+
+
+def _closest_weight_by_ink(page: pymupdf.Page, span: Span) -> str | None:
+    sample_text = span.text.strip() or "Aa"
+    original_ratio = _ink_ratio(page, span.bbox)
+    best_name: str | None = None
+    best_diff = None
+    for name, path in _OPENSANS_WEIGHTS.items():
+        if not path.is_file():
+            continue
+        candidate_ratio = _ink_ratio_for_candidate(path, sample_text, span.size)
+        diff = abs(candidate_ratio - original_ratio)
+        if best_diff is None or diff < best_diff:
+            best_name, best_diff = name, diff
+    return best_name
 
 
 def rgb_int_to_tuple(color: int) -> tuple[float, float, float]:
@@ -418,6 +497,19 @@ def pick_font(doc: pymupdf.Document, page: pymupdf.Page, span: Span, new_text: s
             return FontChoice(fontname=f"f{unique}", fontfile=path, substituted=True)
 
     generic_family = _generic_family_for_flags(span.flags)
+
+    # `flags` is meaningless for a Type3 source (see `_closest_weight_by_ink`)
+    # -- measure the actual rendered glyphs' visual weight instead of
+    # trusting a `bold` bit that's always 0 for these. Sans-serif only for
+    # now: that's the only family we have three calibrated weights for, and
+    # it's what this was actually observed on.
+    if _is_type3_font(span.font) and generic_family == "arial":
+        weight = _closest_weight_by_ink(page, span)
+        if weight:
+            path = str(_OPENSANS_WEIGHTS[weight])
+            if _font_covers_text(path, new_text):
+                return FontChoice(fontname=f"f{unique}", fontfile=path, substituted=True)
+
     path = _system_font_path(generic_family, bold, italic)
     if path and _font_covers_text(path, new_text):
         return FontChoice(fontname=f"f{unique}", fontfile=path, substituted=True)

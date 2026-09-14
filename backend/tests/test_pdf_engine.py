@@ -301,5 +301,48 @@ class BundledFontFallbackTests(unittest.TestCase):
         self.assertIn("«Test»", text)
 
 
+class Type3WeightMatchingTests(unittest.TestCase):
+    """A Type3 font (glyphs are arbitrary vector-drawing programs) has no
+    OS/2/name table, so PyMuPDF's `flags` always reports 0 -- indistinguishable
+    from a genuinely non-bold font. Real bug: a light/thin Type3 original got
+    replaced by a much heavier default weight. These pin down that the
+    rendered-ink-based weight matching (`_closest_weight_by_ink`) picks the
+    right one of the three bundled Open Sans weights instead."""
+
+    def _span_with_font_name(self, page, forced_font_name: str) -> Span:
+        # extract_structure gives a real, tight bbox (unlike a hand-computed
+        # one) -- that precision matters for the ink-ratio comparison to be
+        # meaningful, so build the span from it rather than constructing one
+        # by hand.
+        span = extract_structure(page)[0].dominant_span
+        return Span(**{**span.__dict__, "font": forced_font_name})
+
+    def test_matches_each_bundled_weight_correctly(self):
+        for true_weight, filename in (
+            ("light", "OpenSans-Light.ttf"),
+            ("regular", "OpenSans-Regular.ttf"),
+            ("bold", "OpenSans-Bold.ttf"),
+        ):
+            with self.subTest(true_weight=true_weight):
+                doc, page = _page(width=400, height=100)
+                fontfile = str(pdf_engine._OPENSANS_FONT_DIR / filename)
+                page.insert_text((40, 50), "Gris Clair", fontsize=11, fontname="fref", fontfile=fontfile)
+                span = self._span_with_font_name(page, "Type3 (1 0 R)")
+                self.assertEqual(pdf_engine._closest_weight_by_ink(page, span), true_weight)
+
+    def test_editing_light_type3_original_keeps_a_light_substitute(self):
+        doc, page = _page(width=400, height=100)
+        fontfile = str(pdf_engine._OPENSANS_FONT_DIR / "OpenSans-Light.ttf")
+        page.insert_text((40, 50), "Gris Clair", fontsize=11, fontname="fref", fontfile=fontfile)
+        blocks = extract_structure(page)
+        block = blocks[0]
+        block.lines[0].spans[0] = self._span_with_font_name(page, "Type3 (1 0 R)")
+
+        apply_block_edit(doc, page, block, "Rouge Clair", all_blocks=blocks)
+        new_blocks = extract_structure(page)
+        new_span = new_blocks[0].dominant_span
+        self.assertIn("Light", new_span.font or "", "expected the light weight to be reused")
+
+
 if __name__ == "__main__":
     unittest.main()
