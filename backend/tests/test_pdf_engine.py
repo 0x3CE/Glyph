@@ -273,12 +273,15 @@ class BundledFontFallbackTests(unittest.TestCase):
 
     def setUp(self):
         # Simulate running without macOS's system fonts, regardless of the
-        # platform actually running this test.
-        self._real_system_font_dir = pdf_engine._SYSTEM_FONT_DIR
-        pdf_engine._SYSTEM_FONT_DIR = Path("/nonexistent-on-purpose")
+        # platform actually running this test. Patched on `pdf_engine.fonts`
+        # (where `_system_font_path` actually reads the global from), not on
+        # the re-exporting `pdf_engine` package -- those are separate name
+        # bindings once the engine is split into submodules.
+        self._real_system_font_dir = pdf_engine.fonts._SYSTEM_FONT_DIR
+        pdf_engine.fonts._SYSTEM_FONT_DIR = Path("/nonexistent-on-purpose")
 
     def tearDown(self):
-        pdf_engine._SYSTEM_FONT_DIR = self._real_system_font_dir
+        pdf_engine.fonts._SYSTEM_FONT_DIR = self._real_system_font_dir
 
     def test_bundled_fonts_exist_on_disk(self):
         for filename in {
@@ -440,6 +443,91 @@ class Type3WeightMatchingTests(unittest.TestCase):
         font_choice = pdf_engine.pick_font(doc, page, block, "Gris fonce")
         embedded_weight = TTFont(font_choice.fontfile)["OS/2"].usWeightClass
         self.assertEqual(embedded_weight, pdf_engine._TYPE3_DEFAULT_WEIGHT)
+
+
+class MixedFormattingPreservationTests(unittest.TestCase):
+    """A single PyMuPDF line can carry more than one font (e.g. a bold
+    defined-term inside an otherwise plain sentence: '...ou « TEMF »').
+    `Block.dominant_span` picks ONE span (by character count) to represent
+    the whole block for reinsertion -- real bug: the surrounding plain text
+    always outweighs a short bold acronym, so editing ANYTHING in the
+    sentence, even far from "TEMF", silently dropped its bold. These pin
+    down that `_build_formatted_segments` + `apply_block_edit` reuse each
+    unchanged run's own original span instead."""
+
+    def _insert_mixed_line(self, page, regular_font, bold_font):
+        page.insert_text((40, 50), "Ci-apres denommee ", fontsize=10, fontname="freg", fontfile=regular_font, set_simple=1)
+        x1 = pymupdf.Font(fontfile=regular_font).text_length("Ci-apres denommee ", fontsize=10)
+        page.insert_text((40 + x1, 50), "TEMF", fontsize=10, fontname="fbold", fontfile=bold_font, set_simple=1)
+        x2 = x1 + pymupdf.Font(fontfile=bold_font).text_length("TEMF", fontsize=10)
+        page.insert_text((40 + x2, 50), " dans ce contrat", fontsize=10, fontname="freg2", fontfile=regular_font, set_simple=1)
+
+    def test_editing_elsewhere_in_the_sentence_keeps_the_untouched_bold_word(self):
+        doc, page = _page(width=595, height=100)
+        regular = "/System/Library/Fonts/Supplemental/Arial.ttf"
+        bold = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+        self._insert_mixed_line(page, regular, bold)
+        block = extract_structure(page)[0]
+        self.assertEqual(len(block.lines[0].spans), 3, "test setup should produce 3 spans (plain/bold/plain)")
+
+        apply_block_edit(doc, page, block, "Ci-apres nommee TEMF dans ce contrat de vente", all_blocks=[block])
+
+        spans = extract_structure(page)[0].lines[0].spans
+        bold_spans = [s for s in spans if s.flags & pdf_engine.FLAG_BOLD]
+        self.assertTrue(bold_spans, "expected at least one bold span to survive")
+        self.assertTrue(any(s.text.strip() == "TEMF" for s in bold_spans), "expected TEMF specifically to stay bold")
+        non_bold_text = "".join(s.text for s in spans if not (s.flags & pdf_engine.FLAG_BOLD))
+        self.assertNotIn("TEMF", non_bold_text)
+
+    def test_replacing_the_bold_word_itself_keeps_it_bold(self):
+        # Real bug, found right after the first fix shipped: a user
+        # replaced "TEMF" with a different acronym ("GDPR") -- since the
+        # new word is never "unchanged" from the original, the first
+        # (equal-run-only) version of this feature still lost the bold
+        # here. `_span_for_change` covers this: the changed range (old
+        # "TEMF") is entirely contained within one span (the bold one), so
+        # the replacement text inherits that span's formatting.
+        doc, page = _page(width=595, height=100)
+        regular = "/System/Library/Fonts/Supplemental/Arial.ttf"
+        bold = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+        self._insert_mixed_line(page, regular, bold)
+        block = extract_structure(page)[0]
+
+        apply_block_edit(doc, page, block, "Ci-apres denommee GDPR dans ce contrat", all_blocks=[block])
+        spans = extract_structure(page)[0].lines[0].spans
+        bold_spans = [s for s in spans if s.flags & pdf_engine.FLAG_BOLD]
+        self.assertTrue(any(s.text.strip() == "GDPR" for s in bold_spans), "expected GDPR to inherit TEMF's bold")
+        self.assertNotIn("TEMF", page.get_text())
+
+    def test_change_spanning_multiple_original_spans_falls_back_to_overall_font(self):
+        # Genuinely ambiguous case: the changed range crosses from the
+        # plain prefix into the bold word, so there's no single original
+        # span to attribute the replacement to -- `_span_for_change`
+        # returns None and it falls back to the block's overall font, same
+        # as before either fix existed. Not a regression: nothing here
+        # tells us the user still wants any part of this bold. Deliberately
+        # disjoint placeholder text ("AAAA"/"BBBB"/"ZZZZZZZZZ") instead of
+        # prose here: real words risk sharing short common substrings that
+        # let difflib match more finely than intended, obscuring the
+        # single-clean-replace-opcode case this test means to exercise.
+        doc, page = _page(width=595, height=100)
+        regular = "/System/Library/Fonts/Supplemental/Arial.ttf"
+        bold = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+        page.insert_text((40, 50), "AAAA ", fontsize=10, fontname="freg", fontfile=regular, set_simple=1)
+        x1 = pymupdf.Font(fontfile=regular).text_length("AAAA ", fontsize=10)
+        page.insert_text((40 + x1, 50), "BBBB", fontsize=10, fontname="fbold", fontfile=bold, set_simple=1)
+        x2 = x1 + pymupdf.Font(fontfile=bold).text_length("BBBB", fontsize=10)
+        page.insert_text((40 + x2, 50), " CCCC", fontsize=10, fontname="freg2", fontfile=regular, set_simple=1)
+        block = extract_structure(page)[0]
+        self.assertEqual(len(block.lines[0].spans), 3, "test setup should produce 3 spans (plain/bold/plain)")
+
+        apply_block_edit(doc, page, block, "ZZZZZZZZZ CCCC", all_blocks=[block])
+        spans = extract_structure(page)[0].lines[0].spans
+        self.assertFalse(
+            any(s.flags & pdf_engine.FLAG_BOLD for s in spans if "ZZZZZZZZZ" in s.text),
+            "an ambiguous, multi-span change should not inherit bold from either original span",
+        )
+        self.assertNotIn("BBBB", page.get_text())
 
 
 if __name__ == "__main__":

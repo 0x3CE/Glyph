@@ -197,7 +197,23 @@ Le pire qu'un PDF hostile peut faire est donc de gâcher un sous-processus de co
 
 La mesure par encre (`_closest_weight_by_ink`, `_find_calibration_text`, `_interpolate_weight`, `_instantiate_weight`) reste dans le fichier, testée et fonctionnelle — elle documente une investigation réelle et pourrait resservir si un futur cas montre qu'un Type3 est parfois *authentiquement* gras (ex. une police Type3 dédiée aux libellés en gras, déjà rencontrée plus tôt dans une autre section de ce document) — mais n'est plus appelée depuis `pick_font` pour l'instant.
 
-**Limite acceptée** : ce choix suppose que TOUT Type3 sans-serif édité correspond en réalité à peu près à la graisse "Regular" standard — vrai pour tous les cas réels rencontrés jusqu'ici (une fois Light écarté comme trop fin), mais pas démontré universellement, et le point exact entre 300 et 450 n'est pas encore confirmé par un nouveau test réel au moment d'écrire ceci. Si un futur document a un champ Type3 authentiquement très gras ou très fin, ce défaut produira un résultat à côté. À revoir avec de vraies données à l'appui à chaque fois, pas en devinant à l'avance.
+**Limite acceptée** : ce choix suppose que TOUT Type3 sans-serif édité correspond en réalité à peu près à la graisse "Regular" standard — vrai pour tous les cas réels rencontrés jusqu'ici. Encadré par bisection manuelle sur le même document réel : 300 (Light) → trop fin, ~450 (calibré) → trop épais, 375 → confirmé correct. `_TYPE3_DEFAULT_WEIGHT` (dans `pdf_engine.py`) est la valeur unique lue à la fois par `pick_font` et par les tests, pour que les deux restent synchronisés si ce chiffre est retouché plus tard. Si un futur document a un champ Type3 authentiquement très gras ou très fin, ce défaut produira un résultat à côté — à revoir avec de vraies données à l'appui à chaque fois, pas en devinant à l'avance.
+
+## Un bloc peut mélanger plusieurs polices : ne pas les écraser en une seule
+
+**Signalé par l'utilisateur en test réel** : sur un contrat, une ligne du type *"...ci-après dénommée « TotalEnergies Marketing France » ou « **TEMF** »..."* a des **trois segments** de police différents à l'intérieur d'une seule ligne PyMuPDF : texte normal, "TEMF" en `Calibri-Bold`, texte normal. En éditant *n'importe quoi* dans cette phrase — même à l'autre bout, sans toucher à "TEMF" — le gras de "TEMF" disparaissait systématiquement après l'édition.
+
+**Cause** : `Block.dominant_span` choisit **un seul** span "représentatif" du bloc entier (celui avec le plus de caractères) pour déterminer la police/couleur/taille de toute la réinsertion. Sur cette ligne, le texte normal (plusieurs dizaines de caractères) l'emporte largement sur "TEMF" (4-5 caractères) — tout le nouveau texte est donc réinséré dans la police normale, gras y compris "TEMF" perdu, même quand "TEMF" n'a pourtant pas changé.
+
+**Ce qu'on fait** (`_build_formatted_segments`, `_char_span_map`) : avant de réinsérer, on compare (`difflib.SequenceMatcher`) l'ancien texte du bloc et le nouveau texte tapé par l'utilisateur. Les portions **identiques** entre les deux sont associées au span d'origine exact qui les a produites (recoupé aux frontières de span si une portion inchangée traverse plusieurs styles) ; les portions réellement modifiées retombent sur la police "de repli" habituelle (`pick_font` sur le span dominant, comme avant). Chaque portion est réinsérée avec sa propre police, positionnée bout à bout sur la ligne (`apply_block_edit` fait maintenant plusieurs `insert_text` par ligne au lieu d'un seul).
+
+**Pourquoi c'est sûr de réutiliser directement, sans revérifier la couverture de caractères** (`_extract_span_font`, contrairement à `pick_font` qui vérifie toujours `_font_covers_text`) : une portion "identique" au diff est par construction un sous-ensemble exact de texte que CE span a déjà rendu avec succès avant l'édition — sa police le couvre nécessairement déjà, revérifier serait redondant.
+
+**Piège rencontré en implémentant** : plusieurs portions "de repli" (texte réellement modifié) partagent le **même** objet `FontChoice`, donc le même nom de ressource PDF — recalculer `set_simple` indépendamment pour chacune (selon SON propre texte) a réintroduit exactement le bug déjà documenté plus haut ("premier appel gagne pour tout le tag partagé") : un segment tout-Latin-1 enregistrait la ressource partagée en encodage simple, corrompant silencieusement un segment ultérieur contenant un `€` sous ce même nom. Corrigé en décidant `set_simple` **une seule fois** pour l'ensemble du texte de repli, comme avant l'introduction des segments multiples — seules les polices réutilisées par span (toujours un nom de ressource neuf par `_extract_span_font`) peuvent se permettre un calcul par segment sans risque de partage.
+
+**Limite initiale, corrigée juste après** : la première version ne préservait que les portions **inchangées mot pour mot** — remonté par l'utilisateur presque immédiatement : remplacer "TEMF" par un autre sigle ("GDPR") perdait quand même le gras, puisque le nouveau mot n'est par définition jamais "identique" à l'ancien.
+
+**Ce qu'on fait en plus** (`_span_for_change`) : pour une portion réellement modifiée (pas "equal"), on vérifie si l'intégralité de l'ancien texte remplacé tombe **dans un seul et même span d'origine** (ex. l'ancien "TEMF" complet, entièrement à l'intérieur du span gras, sans déborder sur le texte normal autour). Si oui, la nouvelle valeur ("GDPR") hérite du style de ce span — contrairement au cas "equal", ce texte n'a jamais été réellement rendu par cette police avant, donc `_font_covers_text` est revérifié (pas de raccourci comme pour les portions inchangées). Si le changement déborde sur plusieurs spans à la fois (ambigu — quel style garder ?), on retombe sur la police de repli, sans deviner.
 
 ## Tests qui ont vraiment servi
 
@@ -205,3 +221,20 @@ Aucun test automatisé n'est committé dans le repo (`backend/smoke_test.py` est
 
 - Toujours tester sur un **vrai** document (celui de l'utilisateur, `interialeortheses.pdf`), jamais seulement un PDF de test synthétique à une ligne — plusieurs bugs (tableau fusionné, collision de ressource police après plusieurs éditions) ne se manifestent que sur un document réel avec plusieurs polices et plusieurs éditions séquentielles.
 - Après chaque édition, vérifier `page.get_text()` sur le résultat — pas seulement un rendu visuel — pour confirmer que l'ancien texte a bien disparu et que le nouveau est exactement celui tapé (caractère par caractère), pas une approximation qui a l'air correcte à l'œil.
+
+## `pdf_engine.py` éclaté en package
+
+**Demandé par l'utilisateur** : le moteur avait grossi jusqu'à ~1100 lignes dans un seul fichier au fil des sections ci-dessus — assez pour rendre une reprise ou un debug futur plus lent que nécessaire. Éclaté en `backend/app/pdf_engine/`, un module par responsabilité :
+
+- `types.py` — le modèle Span/Line/Block et les petits types partagés (`StructureResult`, `EncryptedPdfError`).
+- `structure.py` — `extract_structure` (page PyMuPDF → modèle ci-dessus).
+- `fonts.py` — sélection de police (`pick_font`), extraction de police embarquée, correspondance métrique.
+- `type3_weight.py` — toute la mesure par encre pour les polices Type3 (voir section ci-dessus).
+- `geometry.py` — `_sibling_bound`.
+- `formatting_diff.py` — préservation du formatage par diff (`_build_formatted_segments`, `_span_for_change`).
+- `editor.py` — `apply_block_edit`, qui orchestre tout ce qui précède.
+- `workers.py` — les trois points d'entrée appelés depuis le sous-processus isolé (`worker_validate_pdf`, `worker_extract_structure`, `worker_apply_edit`).
+
+`__init__.py` réexporte l'intégralité de l'ancienne surface du module, y compris les noms privés (`_TYPE3_DEFAULT_WEIGHT`, `_system_font_path`, etc.) — `app/main.py` et `backend/tests/test_pdf_engine.py` continuent de faire `from .pdf_engine import ...` / `pdf_engine.X` sans aucun changement. Aucune logique n'a été modifiée, uniquement déplacée ; les 24 tests existants passent à l'identique.
+
+**Piège rencontré** : un test (`BundledFontFallbackTests`) monkeypatchait `pdf_engine._SYSTEM_FONT_DIR` pour simuler l'absence de polices système macOS. Une fois `fonts.py` extrait, cette variable n'existe plus comme un seul binding global — `pdf_engine._SYSTEM_FONT_DIR` (la réexportation) et `pdf_engine.fonts._SYSTEM_FONT_DIR` (celle que `_system_font_path` lit réellement) sont deux noms séparés après l'import ; patcher le premier n'a plus d'effet sur le second. Le test a été corrigé pour patcher `pdf_engine.fonts._SYSTEM_FONT_DIR` directement — la seule cible qui marche pour ce genre de monkeypatch une fois le moteur découpé en sous-modules.

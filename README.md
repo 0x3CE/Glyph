@@ -9,7 +9,7 @@ It's a small, focused, open-source tool: no accounts, no cloud storage, no track
 1. Open a PDF (uploaded to the local backend, kept in memory only).
 2. Click a line of text — an editor appears exactly where it is. Editing is always per line, including a field that visually spans several lines (an address, say) — see "Known limitations" below.
 3. Change the text and save.
-4. The backend removes the original glyphs (real redaction, not an overlay) and re-inserts the new text using the original font if it covers all the needed characters, or a close system font with metric compensation otherwise (you'll see a warning banner when that happens).
+4. The backend removes the original glyphs (real redaction, not an overlay) and re-inserts the new text using the original font if it covers all the needed characters, or a close system font with metric compensation otherwise (you'll see a warning banner when that happens). If the line mixes styles (a bold word inside an otherwise plain sentence, say), Glyph diffs your edit against the original and keeps that word's exact original formatting wherever the surrounding edit left it untouched, instead of collapsing the whole line to one font (see `docs/DECISIONS.md`).
 5. Undo/redo walk through the document's version history (kept server-side).
 6. Download the result whenever you like.
 
