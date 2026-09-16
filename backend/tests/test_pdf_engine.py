@@ -11,6 +11,7 @@ doesn't require adding a test framework to run it.
 
 from __future__ import annotations
 
+import io
 import sys
 import unittest
 from pathlib import Path
@@ -18,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pymupdf
+from fontTools.ttLib import TTFont
 
 import app.pdf_engine as pdf_engine
 from app.pdf_engine import Block, Line, Span, apply_block_edit, extract_structure
@@ -219,6 +221,21 @@ class ApplyBlockEditSafetyTests(unittest.TestCase):
         self.assertIn("Note: urgent", text)
         self.assertIn("Date: 01/01/2026", text)
 
+    def test_grows_sideways_instead_of_shrinking_when_no_neighbor_blocks_it(self):
+        # Real bug: a substitute font (metrically wider than the original)
+        # plus a slightly longer replacement word needed noticeably more
+        # width than the original text did. With nothing to the right for
+        # ~250pt, the field should grow into that empty space rather than
+        # shrink its font size for no reason -- a 19% shrink was observed
+        # in practice before this fix.
+        field = self._make("field", (40.0, 40.0, 86.6, 54.0), "Gris Clair", size=11)
+        doc, page = _page(width=400)
+        page.insert_text((40.0, 51.0), field.text, fontsize=11, fontname="helv")
+
+        apply_block_edit(doc, page, field, "Gris foncée", all_blocks=[field])
+        new_span = extract_structure(page)[0].dominant_span
+        self.assertGreaterEqual(new_span.size, 11.0 * 0.95, "font was shrunk despite no neighbor blocking growth")
+
     def test_editing_middle_row_of_tight_value_column_leaves_no_leftover_glyph(self):
         # Real bug: a lone "2" sits, with tight leading, between a long
         # reference number above and a date below in a 3-row right-aligned
@@ -306,8 +323,8 @@ class Type3WeightMatchingTests(unittest.TestCase):
     OS/2/name table, so PyMuPDF's `flags` always reports 0 -- indistinguishable
     from a genuinely non-bold font. Real bug: a light/thin Type3 original got
     replaced by a much heavier default weight. These pin down that the
-    rendered-ink-based weight matching (`_closest_weight_by_ink`) picks the
-    right one of the three bundled Open Sans weights instead."""
+    rendered-ink-based weight matching (`_closest_weight_by_ink`) lands in
+    the right zone of the `wght` axis (300-800) instead."""
 
     def _span_with_font_name(self, page, forced_font_name: str) -> Span:
         # extract_structure gives a real, tight bbox (unlike a hand-computed
@@ -318,19 +335,30 @@ class Type3WeightMatchingTests(unittest.TestCase):
         return Span(**{**span.__dict__, "font": forced_font_name})
 
     def test_matches_each_bundled_weight_correctly(self):
-        for true_weight, filename in (
-            ("light", "OpenSans-Light.ttf"),
-            ("regular", "OpenSans-Regular.ttf"),
-            ("bold", "OpenSans-Bold.ttf"),
+        for true_weight, filename, expected_range in (
+            ("light", "OpenSans-Light.ttf", (300.0, 380.0)),
+            ("regular", "OpenSans-Regular.ttf", (400.0, 400.0)),
+            ("bold", "OpenSans-Bold.ttf", (620.0, 700.0)),
         ):
             with self.subTest(true_weight=true_weight):
                 doc, page = _page(width=400, height=100)
                 fontfile = str(pdf_engine._OPENSANS_FONT_DIR / filename)
                 page.insert_text((40, 50), "Gris Clair", fontsize=11, fontname="fref", fontfile=fontfile)
                 span = self._span_with_font_name(page, "Type3 (1 0 R)")
-                self.assertEqual(pdf_engine._closest_weight_by_ink(page, span), true_weight)
+                weight = pdf_engine._closest_weight_by_ink(page, span.bbox, span.text, span.size)
+                lo, hi = expected_range
+                self.assertTrue(lo <= weight <= hi, f"{true_weight}: expected {lo}-{hi}, got {weight}")
 
-    def test_editing_light_type3_original_keeps_a_light_substitute(self):
+    def test_editing_type3_original_via_apply_block_edit_embeds_the_bisected_weight(self):
+        # Same check as `test_type3_sans_serif_uses_the_current_bisected_default_weight`
+        # but through the full `apply_block_edit` path (redaction + actual
+        # PDF embedding), not just `pick_font` -- confirms the chosen font
+        # file's weight really is what ends up embedded in the page, not
+        # just what `pick_font` returns. Checks the embedded font's actual
+        # OS/2.usWeightClass rather than its name: the dynamically-instantiated
+        # font this code path always produces right now has no meaningful
+        # name, since `_instantiate_weight` skips `updateFontNames` for
+        # these one-off, discarded files.
         doc, page = _page(width=400, height=100)
         fontfile = str(pdf_engine._OPENSANS_FONT_DIR / "OpenSans-Light.ttf")
         page.insert_text((40, 50), "Gris Clair", fontsize=11, fontname="fref", fontfile=fontfile)
@@ -339,9 +367,79 @@ class Type3WeightMatchingTests(unittest.TestCase):
         block.lines[0].spans[0] = self._span_with_font_name(page, "Type3 (1 0 R)")
 
         apply_block_edit(doc, page, block, "Rouge Clair", all_blocks=blocks)
-        new_blocks = extract_structure(page)
-        new_span = new_blocks[0].dominant_span
-        self.assertIn("Light", new_span.font or "", "expected the light weight to be reused")
+
+        embedded_weight = None
+        for f in page.get_fonts(full=True):
+            xref = f[0]
+            _name, _ext, _ftype, font_bytes = doc.extract_font(xref)
+            if font_bytes:
+                embedded_weight = TTFont(io.BytesIO(font_bytes))["OS/2"].usWeightClass
+        self.assertEqual(embedded_weight, pdf_engine._TYPE3_DEFAULT_WEIGHT)
+
+    def test_real_document_field_interpolates_between_samples(self):
+        # Exact numbers measured on the real document that exposed this,
+        # at the current zoom (12x -- see docs/DECISIONS.md for why 4x
+        # wasn't enough resolution): the original sits genuinely between
+        # the regular and bold samples, not on top of either one. Snapping
+        # to whichever bucket is merely closest ("regular", the smaller
+        # diff) still looked visibly heavier than the true original in
+        # practice -- interpolating a continuous point between the two
+        # brackets is what actually matches it.
+        weight = pdf_engine._interpolate_weight(
+            0.1503, {"light": 0.0857, "regular": 0.1210, "bold": 0.1898}
+        )
+        self.assertTrue(450.0 <= weight <= 600.0, f"expected an intermediate weight, got {weight}")
+
+    def test_decisive_light_signal_interpolates_near_light(self):
+        weight = pdf_engine._interpolate_weight(0.091, {"light": 0.090, "regular": 0.140, "bold": 0.205})
+        self.assertTrue(300.0 <= weight <= 320.0, f"expected a weight near light (300), got {weight}")
+
+    def test_finds_longer_same_resource_calibration_text(self):
+        # `_find_calibration_text` itself: still real, tested, kept in the
+        # file for its diagnostic value (see docs/DECISIONS.md), even
+        # though `pick_font` doesn't call it right now -- the computed
+        # weight it enables turned out to still render too heavy in
+        # practice across three independent viewers, for reasons the ink
+        # measurement itself couldn't explain. `pick_font` currently uses
+        # a flat Light default for Type3 sources instead (tested below).
+        #
+        # `_find_calibration_text` reads the font name straight back from
+        # the page's own content stream (`page.get_text("dict")`), not
+        # from any Python-side `Span` object -- so unlike other tests in
+        # this file, faking `.font` on an already-extracted `Span` doesn't
+        # reach it; both runs here genuinely share PyMuPDF's own resource
+        # name for this embedded font.
+        doc, page = _page(width=595, height=100)
+        fontfile = str(pdf_engine._OPENSANS_FONT_DIR / "OpenSans-Regular.ttf")
+        page.insert_text((40, 30), "Velo route Cyclotourisme RC120 Disque", fontsize=11, fontname="fref", fontfile=fontfile)
+        page.insert_text((40, 55), "Gris Clair", fontsize=11, fontname="fref", fontfile=fontfile)
+
+        target = next(b for b in extract_structure(page) if "clair" in b.text.lower())
+        font_name = target.dominant_span.font
+        own_bboxes = {tuple(s.bbox) for line in target.lines for s in line.spans}
+
+        calibration = pdf_engine._find_calibration_text(page, font_name, own_bboxes)
+        self.assertIsNotNone(calibration)
+        cal_text, _cal_bbox = calibration
+        self.assertIn("Cyclotourisme", cal_text)
+
+    def test_type3_sans_serif_uses_the_current_bisected_default_weight(self):
+        # Pragmatic current default, under active manual bisection on a
+        # real document (see docs/DECISIONS.md): Light (300) came back too
+        # thin, the ink-ratio-calibrated ~450 came back too thick.
+        # `_TYPE3_DEFAULT_WEIGHT` is the single source of truth for
+        # whatever point is being tried next -- read it here instead of
+        # hardcoding a number, so this test stays in sync automatically
+        # while that constant keeps changing.
+        doc, page = _page(width=400, height=100)
+        fontfile = str(pdf_engine._OPENSANS_FONT_DIR / "OpenSans-Bold.ttf")
+        page.insert_text((40, 50), "Gris Clair", fontsize=11, fontname="fref", fontfile=fontfile)
+        block = extract_structure(page)[0]
+        block.lines[0].spans[0] = Span(**{**block.lines[0].spans[0].__dict__, "font": "Type3 (1 0 R)"})
+
+        font_choice = pdf_engine.pick_font(doc, page, block, "Gris fonce")
+        embedded_weight = TTFont(font_choice.fontfile)["OS/2"].usWeightClass
+        self.assertEqual(embedded_weight, pdf_engine._TYPE3_DEFAULT_WEIGHT)
 
 
 if __name__ == "__main__":
