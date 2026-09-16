@@ -10,8 +10,9 @@ It's a small, focused, open-source tool: no accounts, no cloud storage, no track
 2. Click a line of text — an editor appears exactly where it is. Editing is always per line, including a field that visually spans several lines (an address, say) — see "Known limitations" below.
 3. Change the text and save.
 4. The backend removes the original glyphs (real redaction, not an overlay) and re-inserts the new text using the original font if it covers all the needed characters, or a close system font with metric compensation otherwise (you'll see a warning banner when that happens). If the line mixes styles (a bold word inside an otherwise plain sentence, say), Glyph diffs your edit against the original and keeps that word's exact original formatting wherever the surrounding edit left it untouched, instead of collapsing the whole line to one font (see `docs/DECISIONS.md`).
-5. Undo/redo walk through the document's version history (kept server-side).
-6. Download the result whenever you like.
+5. Add a signature: draw one on a canvas, or import a file (PDF, PNG, or JPEG), then drag/resize it into place. A PDF signature is embedded as vector (crisp at any zoom); an image is stamped as-is.
+6. Undo/redo walk through the document's version history (kept server-side).
+7. Download the result whenever you like.
 
 ## Getting started
 
@@ -42,6 +43,7 @@ Both sides read a few optional environment variables — useful once you deploy 
 | `BACKEND_URL` | frontend | `http://localhost:8000` | Where `/api/*` gets proxied to (`next.config.ts`). |
 | `ALLOWED_ORIGINS` | backend | `http://localhost:3000` | Comma-separated CORS allowlist. Set to your deployed frontend URL. |
 | `MAX_UPLOAD_MB` | backend | `20` | Upload size cap. |
+| `MAX_SIGNATURE_MB` | backend | `5` | Signature file size cap (drawn signatures are small PNGs and rarely get close to this). |
 | `SANDBOX_MAX_MEMORY_MB` / `SANDBOX_MAX_CPU_SECONDS` / `SANDBOX_TIMEOUT_SECONDS` | backend | `512` / `8` / `15` | Limits applied to the isolated subprocess that parses each PDF (see below). |
 | `NEXT_PUBLIC_SITE_URL` | frontend | placeholder | Canonical URL used for SEO metadata once you have a real domain. |
 
@@ -83,7 +85,8 @@ backend/        # FastAPI + PyMuPDF (the actual editing engine)
 
 ## Known limitations
 
-- **Upload and edit size**: PDFs over 20 MB are rejected, and a single edit is capped at 5000 characters (both configurable, see above).
+- **Upload and edit size**: PDFs over 20 MB are rejected, a single edit is capped at 5000 characters, and a signature file over 5 MB is rejected (all configurable, see above).
+- **Signature placement doesn't preserve aspect ratio automatically**: the placement box is freely resizable in both dimensions, so a signature can be stretched out of proportion if you drag unevenly — nothing currently locks the ratio while resizing.
 - **PDF parsing is sandboxed**: every operation touching an uploaded PDF runs in a short-lived, resource-limited subprocess (see [`docs/DECISIONS.md`](./docs/DECISIONS.md#isoler-le-parsing-pdf-dans-un-sous-processus)), since a malformed PDF can crash the underlying C library. This adds a small per-request overhead but keeps one bad file from taking down the whole backend.
 - **Reusing the original font** only works if it exposes a usable Unicode cmap. Most PDFs produced by Word or a virtual printer embed subsetted Identity-H fonts without one — in that (very common) case, Glyph falls back to a system font with the same name (e.g. Arial Narrow), or a generic system font otherwise, with metric compensation to preserve the original visual width. A **Type3-sourced font** (glyphs drawn as arbitrary vector programs, common in some report generators) carries no weight metadata at all — in that case Glyph renders the original glyphs and measures how much of the original's ink survives compared to a bundled Open Sans variable font, interpolating a matching weight on the fly (not just snapping to Light/Regular/Bold, see `docs/DECISIONS.md`) rather than guessing.
 - **Editing is per line, deliberately**: a field spanning several visual lines (an address, a multi-line note) is edited one line at a time rather than as a single reflow-capable block. Earlier versions tried to auto-detect "this is one wrapped paragraph" from shared edges/alignment, but real documents kept surfacing independent lines that looked just like a wrapped paragraph by coincidence (a title stacked on a subtitle, a right-aligned column of unrelated values) — merging them let editing one line corrupt another. Per-line editing has no such failure mode. See `docs/DECISIONS.md`.

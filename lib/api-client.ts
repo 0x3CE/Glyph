@@ -1,4 +1,4 @@
-import type { EditResponse, PageStructure, UploadResponse } from "./types";
+import type { EditResponse, PageStructure, SignatureResponse, UploadResponse } from "./types";
 
 const BASE = "/api";
 
@@ -32,6 +32,26 @@ export async function editBlock(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text }),
+  });
+  return json(res);
+}
+
+export async function addSignature(
+  documentId: string,
+  pageIndex: number,
+  file: Blob,
+  bbox: [number, number, number, number],
+): Promise<SignatureResponse> {
+  const form = new FormData();
+  form.append("file", file, "signature");
+  const [x0, y0, x1, y1] = bbox;
+  form.append("x0", String(x0));
+  form.append("y0", String(y0));
+  form.append("x1", String(x1));
+  form.append("y1", String(y1));
+  const res = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/signature`, {
+    method: "POST",
+    body: form,
   });
   return json(res);
 }

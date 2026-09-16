@@ -10,6 +10,7 @@ import io
 import pymupdf
 
 from .editor import apply_block_edit
+from .signature import apply_signature
 from .structure import extract_structure
 from .types import EncryptedPdfError, StructureResult
 
@@ -47,3 +48,16 @@ def worker_apply_edit(
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue(), substituted, new_bbox
+
+
+def worker_add_signature(
+    pdf_bytes: bytes, page_index: int, signature_bytes: bytes, bbox: tuple[float, float, float, float]
+) -> tuple[bytes, tuple[float, float, float, float]]:
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    if not (0 <= page_index < doc.page_count):
+        raise IndexError("page not found")
+    page = doc[page_index]
+    new_bbox = apply_signature(doc, page, signature_bytes, bbox)
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue(), new_bbox

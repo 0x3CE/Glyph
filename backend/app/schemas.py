@@ -41,3 +41,7 @@ class EditRequest(BaseModel):
 class EditResponse(BaseModel):
     font_substituted: bool
     new_bbox: tuple[float, float, float, float]
+
+
+class SignatureResponse(BaseModel):
+    bbox: tuple[float, float, float, float]

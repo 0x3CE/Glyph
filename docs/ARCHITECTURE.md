@@ -10,7 +10,7 @@ Glyph a deux parties qui ne parlent que par HTTP, chacune remplaçable indépend
 │                               │        │                               │
 │  /            page marketing │  /api  │  documents.py  état en mémoire│
 │  /editor      outil (client) │ ─────▶ │  main.py       routes HTTP    │
-│                               │ proxy  │  pdf_engine.py moteur PyMuPDF │
+│                               │ proxy  │  pdf_engine/   moteur PyMuPDF │
 │  components/PdfPage.tsx      │        │                               │
 │    → rendu pdf.js (canvas)   │        │  Aucun fichier écrit sur      │
 │    → overlay cliquable       │        │  disque : tout vit dans la    │
@@ -31,8 +31,9 @@ Le rendu (pdf.js, canvas, clic sur un champ) reste 100% client — pas de raison
 3. **Structure** — `GET /api/documents/{id}/pages/{n}/structure` : le backend appelle `page.get_text("dict")` (PyMuPDF), qui donne déjà une hiérarchie bloc → ligne → span avec police/taille/couleur/position. `extract_structure()` (`pdf_engine.py`) reclasse ça en unités éditables (voir [`DECISIONS.md`](./DECISIONS.md#regroupement-bloc-vs-ligne) pour pourquoi c'est nécessaire).
 4. **Superposition cliquable** — le frontend positionne un `<div>` invisible par bloc, à la bonne position en pixels (coordonnées PDF × échelle de zoom). Clic → `<textarea>` positionnée pile dessus.
 5. **Édition** — `POST /api/documents/{id}/pages/{n}/blocks/{blockId}/edit` avec le nouveau texte (borné à 5000 caractères). `apply_block_edit()` fait le travail réel : redaction (suppression des glyphes d'origine) + choix de police + réinsertion. Le PDF modifié est resauvegardé en mémoire et empilé dans l'historique (`DocumentState.push`).
-6. **Undo/redo** — `DocumentState` garde une pile de snapshots complets du PDF (bytes). `undo`/`redo` déplacent juste un curseur dans cette pile — pas de diff, pas de patch, juste "revenir à la version N".
-7. **Téléchargement** — `GET /api/documents/{id}/file` renvoie l'état courant (celui pointé par le curseur d'historique).
+6. **Signature** (variante de l'étape précédente, pas une édition de bloc) — `POST /api/documents/{id}/pages/{n}/signature` : le frontend place un cadre déplaçable/redimensionnable par-dessus la page (`components/SignaturePlacer.tsx`), le fichier source (PDF importé, image importée, ou export PNG du canvas de dessin, `components/SignatureModal.tsx`) part en `multipart/form-data` avec les coordonnées du cadre. `apply_signature()` (`pdf_engine/signature.py`) reconnaît le type par ses octets (pas par le nom de fichier ni le content-type déclaré) : un PDF est incrusté en vectoriel (`page.show_pdf_page`), une image PNG/JPEG via `page.insert_image` — dans les deux cas étiré exactement au cadre choisi. Empile aussi dans l'historique undo/redo.
+7. **Undo/redo** — `DocumentState` garde une pile de snapshots complets du PDF (bytes). `undo`/`redo` déplacent juste un curseur dans cette pile — pas de diff, pas de patch, juste "revenir à la version N".
+8. **Téléchargement** — `GET /api/documents/{id}/file` renvoie l'état courant (celui pointé par le curseur d'historique).
 
 Comme `structure` et `edit` **recalculent** `extract_structure()` à chaque appel (au lieu de garder un état d'arbre en mémoire), les identifiants de bloc (`b3`, `b12l2`...) ne sont valables que pour la structure qui vient d'être renvoyée. Le frontend refait toujours un `GET .../structure` frais avant de proposer un clic — ne jamais réutiliser un `block_id` d'une réponse précédente.
 
@@ -40,12 +41,14 @@ Comme `structure` et `edit` **recalculent** `extract_structure()` à chaque appe
 
 | Fichier | Rôle |
 |---|---|
-| `backend/app/pdf_engine.py` | Le moteur : extraction de structure, choix de police, redaction + réinsertion, + les fonctions `worker_*` exécutées côté sandbox. Toute la logique métier est là — voir [`DECISIONS.md`](./DECISIONS.md) pour le détail de chaque choix non-évident. |
-| `backend/app/isolation.py` | Exécute chaque opération PyMuPDF (upload, structure, édition) dans un sous-processus jetable avec limites mémoire/CPU/temps — voir [`DECISIONS.md`](./DECISIONS.md#isoler-le-parsing-pdf-dans-un-sous-processus). |
-| `backend/app/main.py` | Routes FastAPI, fines — délèguent tout à `isolation.py`/`pdf_engine.py` et `documents.py`. |
+| `backend/app/pdf_engine/` | Le moteur, un module par responsabilité (extraction de structure, choix de police, redaction + réinsertion, placement de signature) + les fonctions `worker_*` exécutées côté sandbox, toutes réexportées par `__init__.py`. Toute la logique métier est là — voir [`DECISIONS.md`](./DECISIONS.md) pour le détail de chaque choix non-évident. |
+| `backend/app/isolation.py` | Exécute chaque opération PyMuPDF (upload, structure, édition, signature) dans un sous-processus jetable avec limites mémoire/CPU/temps — voir [`DECISIONS.md`](./DECISIONS.md#isoler-le-parsing-pdf-dans-un-sous-processus). |
+| `backend/app/main.py` | Routes FastAPI, fines — délèguent tout à `isolation.py`/`pdf_engine/` et `documents.py`. |
 | `backend/app/documents.py` | Store en mémoire + historique undo/redo. Pas de base de données. |
-| `components/PdfPage.tsx` | Rendu canvas + overlay cliquable + `<textarea>` d'édition. |
-| `components/EditorApp.tsx` | Écran `/editor` complet (upload, navigation de page, undo/redo, téléchargement). |
+| `components/PdfPage.tsx` | Rendu canvas + overlay cliquable + `<textarea>` d'édition + intègre `SignaturePlacer`. |
+| `components/SignatureModal.tsx` | Capture de la signature source : dessin sur `<canvas>`, ou import d'un fichier PDF/PNG/JPG. |
+| `components/SignaturePlacer.tsx` | Cadre déplaçable/redimensionnable pour positionner la signature sur la page avant validation. |
+| `components/EditorApp.tsx` | Écran `/editor` complet (upload, navigation de page, undo/redo, signature, téléchargement). |
 | `lib/api-client.ts` | Tous les appels `fetch` vers le backend, typés. |
 | `app/page.tsx` | Page marketing statique (SSG) — voir la section SEO du README. |
 

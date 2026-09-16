@@ -4,6 +4,8 @@ import { useCallback, useState } from "react";
 import type { DragEvent } from "react";
 import Link from "next/link";
 import { PdfPage } from "@/components/PdfPage";
+import type { PendingSignature } from "@/components/PdfPage";
+import { SignatureModal } from "@/components/SignatureModal";
 import { BrandMark } from "@/components/BrandMark";
 import { documentDownloadUrl, redo, undo, uploadDocument } from "@/lib/api-client";
 
@@ -22,6 +24,8 @@ export function EditorApp() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [showSignatureModal, setShowSignatureModal] = useState(false);
+  const [pendingSignature, setPendingSignature] = useState<PendingSignature | null>(null);
 
   const loadFile = useCallback(async (file: File) => {
     setError(null);
@@ -49,6 +53,14 @@ export function EditorApp() {
     setCanUndo(true);
     setCanRedo(false);
     setSubstitutionNotice(fontSubstituted);
+    setVersion((v) => v + 1);
+  };
+
+  const handleSignaturePlaced = () => {
+    setPendingSignature(null);
+    setEditCount((n) => n + 1);
+    setCanUndo(true);
+    setCanRedo(false);
     setVersion((v) => v + 1);
   };
 
@@ -113,6 +125,13 @@ export function EditorApp() {
               </button>
               <button className="btn btn-icon" onClick={handleRedo} disabled={!canRedo} title="Rétablir">
                 ↷
+              </button>
+              <button
+                className="btn btn-ghost"
+                onClick={() => setShowSignatureModal(true)}
+                disabled={!!pendingSignature}
+              >
+                Signature
               </button>
               <a
                 className="btn btn-accent"
@@ -212,6 +231,9 @@ export function EditorApp() {
                 version={version}
                 scale={SCALE}
                 onEdited={handleEdited}
+                pendingSignature={pendingSignature}
+                onSignaturePlaced={handleSignaturePlaced}
+                onCancelSignature={() => setPendingSignature(null)}
               />
             </div>
           </div>
@@ -223,6 +245,16 @@ export function EditorApp() {
           </div>
         )}
       </main>
+
+      {showSignatureModal && (
+        <SignatureModal
+          onClose={() => setShowSignatureModal(false)}
+          onConfirm={(blob, aspectRatio) => {
+            setPendingSignature({ blob, aspectRatio });
+            setShowSignatureModal(false);
+          }}
+        />
+      )}
     </div>
   );
 }

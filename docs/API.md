@@ -98,6 +98,21 @@ Un `\n` dans `text` crée une ligne supplémentaire (utile pour un bloc multi-li
 
 ---
 
+### `POST /api/documents/{document_id}/pages/{page_index}/signature`
+
+Place une signature sur la page. Corps : `multipart/form-data`, champ `file` (PDF, PNG ou JPEG — le type est détecté à partir des octets du fichier, pas de son nom ni du content-type déclaré) et quatre champs `x0`, `y0`, `x1`, `y1` (le rectangle cible, en points PDF, origine en haut à gauche — mêmes conventions que `bbox` ailleurs dans cette API).
+
+Un PDF source est incrusté en vectoriel (`page.show_pdf_page`, sa première page uniquement) ; une image PNG/JPEG est insérée telle quelle (`page.insert_image`). Dans les deux cas, la signature est étirée pour remplir exactement le rectangle donné — pas de préservation automatique du ratio d'origine, à gérer côté client si besoin (voir [`DECISIONS.md`](./DECISIONS.md)).
+
+```json
+// 200
+{ "bbox": [100.0, 400.0, 300.0, 460.0] }
+```
+
+`400` si le fichier n'est ni un PDF, ni une PNG, ni une JPEG reconnaissable, ou si c'est un PDF protégé par mot de passe / sans page. `413` si le fichier dépasse `MAX_SIGNATURE_MB` (5 Mo par défaut). `404` si le document ou la page n'existe pas. `422` si le traitement échoue dans la sandbox (timeout/mémoire/CPU).
+
+---
+
 ### `POST /api/documents/{document_id}/undo` / `POST /api/documents/{document_id}/redo`
 
 Aucun corps. Déplace le curseur dans la pile d'historique du document (clampé aux bornes — un undo au tout début ou un redo à la fin est un no-op silencieux).

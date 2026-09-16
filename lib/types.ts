@@ -36,6 +36,10 @@ export interface EditResponse {
   new_bbox: [number, number, number, number];
 }
 
+export interface SignatureResponse {
+  bbox: [number, number, number, number];
+}
+
 export const FLAG_ITALIC = 1 << 1;
 export const FLAG_SERIF = 1 << 2;
 export const FLAG_MONOSPACE = 1 << 3;

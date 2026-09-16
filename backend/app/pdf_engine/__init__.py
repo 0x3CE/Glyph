@@ -19,6 +19,7 @@ pickup/debugging (see docs/DECISIONS.md):
 - `geometry`: sibling-aware bounds for redaction/growth.
 - `formatting_diff`: diff-based per-run formatting preservation.
 - `editor`: `apply_block_edit`, the orchestrator tying the above together.
+- `signature`: `apply_signature`, stamping an uploaded/drawn signature onto a page.
 - `workers`: the isolated-subprocess entry points `main.py` calls.
 
 Everything below is re-exported here, including private names, so existing
@@ -53,6 +54,7 @@ from .fonts import (
 )
 from .formatting_diff import _build_formatted_segments, _char_span_map, _span_for_change
 from .geometry import _sibling_bound
+from .signature import UnsupportedSignatureFileError, apply_signature
 from .structure import extract_structure
 from .type3_weight import (
     _INK_RATIO_ZOOM,
@@ -83,7 +85,7 @@ from .types import (
     rgb_int_to_tuple,
 )
 from .editor import apply_block_edit
-from .workers import worker_apply_edit, worker_extract_structure, worker_validate_pdf
+from .workers import worker_add_signature, worker_apply_edit, worker_extract_structure, worker_validate_pdf
 
 __all__ = [
     "FLAG_BOLD",
@@ -96,10 +98,13 @@ __all__ = [
     "Line",
     "Span",
     "StructureResult",
+    "UnsupportedSignatureFileError",
     "apply_block_edit",
+    "apply_signature",
     "extract_structure",
     "pick_font",
     "rgb_int_to_tuple",
+    "worker_add_signature",
     "worker_apply_edit",
     "worker_extract_structure",
     "worker_validate_pdf",

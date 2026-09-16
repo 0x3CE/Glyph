@@ -2,25 +2,32 @@ from __future__ import annotations
 
 import os
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from . import documents
 from .isolation import SandboxError, run_isolated
-from .pdf_engine import worker_apply_edit, worker_extract_structure, worker_validate_pdf
+from .pdf_engine import (
+    worker_add_signature,
+    worker_apply_edit,
+    worker_extract_structure,
+    worker_validate_pdf,
+)
 from .schemas import (
     BlockOut,
     EditRequest,
     EditResponse,
     LineOut,
     PageStructure,
+    SignatureResponse,
     SpanOut,
     UploadResponse,
 )
 
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "20")) * 1024 * 1024
+MAX_SIGNATURE_BYTES = int(os.environ.get("MAX_SIGNATURE_MB", "5")) * 1024 * 1024
 
 # Comma-separated list, e.g. "https://glyph.vercel.app,http://localhost:3000".
 _allowed_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000")
@@ -35,9 +42,16 @@ app.add_middleware(
 )
 
 
-def _sandbox_error_to_http(e: SandboxError, *, not_found: dict[str, str] | None = None) -> HTTPException:
+def _sandbox_error_to_http(
+    e: SandboxError,
+    *,
+    not_found: dict[str, str] | None = None,
+    bad_request: dict[str, str] | None = None,
+) -> HTTPException:
     if not_found and e.kind in not_found:
         return HTTPException(404, not_found[e.kind])
+    if bad_request and e.kind in bad_request:
+        return HTTPException(400, bad_request[e.kind])
     return HTTPException(422, f"failed to process PDF: {e}")
 
 
@@ -122,6 +136,40 @@ def edit_block(document_id: str, page_index: int, block_id: str, body: EditReque
 
     state.push(new_pdf_bytes)
     return EditResponse(font_substituted=substituted, new_bbox=new_bbox)
+
+
+@app.post(
+    "/api/documents/{document_id}/pages/{page_index}/signature",
+    response_model=SignatureResponse,
+)
+async def add_signature(
+    document_id: str,
+    page_index: int,
+    file: UploadFile,
+    x0: float = Form(...),
+    y0: float = Form(...),
+    x1: float = Form(...),
+    y1: float = Form(...),
+) -> SignatureResponse:
+    state = documents.get(document_id)
+    if state is None:
+        raise HTTPException(404, "document not found")
+    raw = await file.read()
+    if len(raw) > MAX_SIGNATURE_BYTES:
+        raise HTTPException(413, f"signature file too large (max {MAX_SIGNATURE_BYTES // (1024 * 1024)} MB)")
+    try:
+        new_pdf_bytes, new_bbox = await run_in_threadpool(
+            run_isolated, worker_add_signature, state.current, page_index, raw, (x0, y0, x1, y1)
+        )
+    except SandboxError as e:
+        raise _sandbox_error_to_http(
+            e,
+            not_found={"IndexError": "page not found"},
+            bad_request={"UnsupportedSignatureFileError": str(e)},
+        ) from e
+
+    state.push(new_pdf_bytes)
+    return SignatureResponse(bbox=new_bbox)
 
 
 @app.post("/api/documents/{document_id}/undo")

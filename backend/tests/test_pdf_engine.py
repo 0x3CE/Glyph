@@ -22,7 +22,7 @@ import pymupdf
 from fontTools.ttLib import TTFont
 
 import app.pdf_engine as pdf_engine
-from app.pdf_engine import Block, Line, Span, apply_block_edit, extract_structure
+from app.pdf_engine import Block, Line, Span, UnsupportedSignatureFileError, apply_block_edit, apply_signature, extract_structure
 
 
 def _page(width=595, height=200):
@@ -528,6 +528,53 @@ class MixedFormattingPreservationTests(unittest.TestCase):
             "an ambiguous, multi-span change should not inherit bold from either original span",
         )
         self.assertNotIn("BBBB", page.get_text())
+
+
+class SignaturePlacementTests(unittest.TestCase):
+    """`apply_signature` is the same code path whether the source is a
+    file the user picked from disk or a PNG the frontend's drawing canvas
+    exported -- both arrive as raw bytes with no reliable extension, so
+    the type is sniffed from the bytes themselves rather than trusted from
+    a filename/content-type."""
+
+    def test_places_a_one_page_pdf_as_vector(self):
+        doc, page = _page()
+        sig_doc = pymupdf.open()
+        sig_doc.new_page(width=200, height=80)
+        sig_bytes = sig_doc.tobytes()
+
+        bbox = apply_signature(doc, page, sig_bytes, (50.0, 60.0, 150.0, 90.0))
+
+        self.assertEqual(bbox, (50.0, 60.0, 150.0, 90.0))
+        # A page was actually embedded (an XObject/form for the placed PDF
+        # page), not just silently a no-op.
+        self.assertGreater(len(doc[0].get_xobjects()), 0)
+
+    def test_places_a_png(self):
+        doc, page = _page()
+        png_doc = pymupdf.open()
+        png_page = png_doc.new_page(width=200, height=80)
+        png_page.draw_line((10, 60), (190, 20))
+        png_bytes = png_page.get_pixmap().tobytes("png")
+
+        bbox = apply_signature(doc, page, png_bytes, (50.0, 60.0, 150.0, 90.0))
+
+        self.assertEqual(bbox, (50.0, 60.0, 150.0, 90.0))
+        self.assertGreater(len(doc[0].get_images()), 0)
+
+    def test_rejects_unrecognized_bytes(self):
+        doc, page = _page()
+        with self.assertRaises(UnsupportedSignatureFileError):
+            apply_signature(doc, page, b"definitely not a pdf or image", (0.0, 0.0, 10.0, 10.0))
+
+    def test_rejects_password_protected_pdf(self):
+        doc, page = _page()
+        sig_doc = pymupdf.open()
+        sig_doc.new_page(width=200, height=80)
+        sig_bytes = sig_doc.tobytes(encryption=pymupdf.PDF_ENCRYPT_AES_256, owner_pw="owner", user_pw="user")
+
+        with self.assertRaises(UnsupportedSignatureFileError):
+            apply_signature(doc, page, sig_bytes, (0.0, 0.0, 10.0, 10.0))
 
 
 if __name__ == "__main__":

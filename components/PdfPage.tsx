@@ -4,9 +4,15 @@ import { useEffect, useRef, useState } from "react";
 import { getDocument } from "pdfjs-dist";
 import type { PDFPageProxy } from "pdfjs-dist";
 import "../lib/pdf-setup";
-import { editBlock, fetchDocumentBytes, getPageStructure } from "../lib/api-client";
+import { addSignature, editBlock, fetchDocumentBytes, getPageStructure } from "../lib/api-client";
 import type { Block } from "../lib/types";
 import { FLAG_BOLD, FLAG_ITALIC, fontFamilyForFlags } from "../lib/types";
+import { SignaturePlacer } from "./SignaturePlacer";
+
+export interface PendingSignature {
+  blob: Blob;
+  aspectRatio: number;
+}
 
 interface PdfPageProps {
   documentId: string;
@@ -14,6 +20,9 @@ interface PdfPageProps {
   version: number;
   scale: number;
   onEdited: (fontSubstituted: boolean) => void;
+  pendingSignature: PendingSignature | null;
+  onSignaturePlaced: () => void;
+  onCancelSignature: () => void;
 }
 
 interface EditingState {
@@ -23,13 +32,23 @@ interface EditingState {
   saving: boolean;
 }
 
-export function PdfPage({ documentId, pageIndex, version, scale, onEdited }: PdfPageProps) {
+export function PdfPage({
+  documentId,
+  pageIndex,
+  version,
+  scale,
+  onEdited,
+  pendingSignature,
+  onSignaturePlaced,
+  onCancelSignature,
+}: PdfPageProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [pageSize, setPageSize] = useState<{ width: number; height: number } | null>(null);
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [loading, setLoading] = useState(true);
+  const [signatureSaving, setSignatureSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -85,7 +104,7 @@ export function PdfPage({ documentId, pageIndex, version, scale, onEdited }: Pdf
   }, [documentId, pageIndex, version, scale]);
 
   const startEdit = (block: Block) => {
-    if (!pageSize) return;
+    if (!pageSize || pendingSignature) return;
     const [x0, y0, x1, y1] = block.bbox;
     setEditing({
       block,
@@ -119,6 +138,18 @@ export function PdfPage({ documentId, pageIndex, version, scale, onEdited }: Pdf
     }
   };
 
+  const confirmSignature = async (bbox: [number, number, number, number]) => {
+    if (!pendingSignature) return;
+    setSignatureSaving(true);
+    try {
+      await addSignature(documentId, pageIndex, pendingSignature.blob, bbox);
+      onSignaturePlaced();
+    } catch (err) {
+      console.error(err);
+      setSignatureSaving(false);
+    }
+  };
+
   const dominantSpan = (block: Block) => {
     let best = block.lines[0]?.spans[0];
     let bestLen = 0;
@@ -136,7 +167,7 @@ export function PdfPage({ documentId, pageIndex, version, scale, onEdited }: Pdf
   return (
     <div className="pdf-page" ref={containerRef}>
       <canvas ref={canvasRef} className="pdf-base-canvas" />
-      <div className="block-overlay">
+      <div className="block-overlay" style={pendingSignature ? { pointerEvents: "none" } : undefined}>
         {!loading &&
           blocks.map((block) => {
             const [x0, y0, x1, y1] = block.bbox;
@@ -197,6 +228,18 @@ export function PdfPage({ documentId, pageIndex, version, scale, onEdited }: Pdf
             </div>
           );
         })()}
+      {pendingSignature && pageSize && (
+        <SignaturePlacer
+          blob={pendingSignature.blob}
+          pageWidth={pageSize.width}
+          pageHeight={pageSize.height}
+          scale={scale}
+          aspectRatio={pendingSignature.aspectRatio}
+          saving={signatureSaving}
+          onConfirm={confirmSignature}
+          onCancel={onCancelSignature}
+        />
+      )}
     </div>
   );
 }
