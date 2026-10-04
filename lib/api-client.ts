@@ -10,11 +10,22 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// Files go up as the raw request body, not multipart: the backend reads it
+// straight into memory with a size cap, instead of a multipart parser that
+// spools large parts to a temporary file on disk.
 export async function uploadDocument(file: File): Promise<UploadResponse> {
-  const form = new FormData();
-  form.append("file", file);
-  const res = await fetch(`${BASE}/documents`, { method: "POST", body: form });
+  const res = await fetch(`${BASE}/documents`, {
+    method: "POST",
+    headers: { "Content-Type": "application/pdf" },
+    body: file,
+  });
   return json(res);
+}
+
+// Frees the server-side copy right away instead of waiting for it to expire.
+// `keepalive` lets the request outlive the page when called from `pagehide`.
+export function deleteDocument(documentId: string): void {
+  fetch(`${BASE}/documents/${documentId}`, { method: "DELETE", keepalive: true }).catch(() => {});
 }
 
 export async function getPageStructure(documentId: string, pageIndex: number): Promise<PageStructure> {
@@ -42,16 +53,12 @@ export async function addSignature(
   file: Blob,
   bbox: [number, number, number, number],
 ): Promise<SignatureResponse> {
-  const form = new FormData();
-  form.append("file", file, "signature");
   const [x0, y0, x1, y1] = bbox;
-  form.append("x0", String(x0));
-  form.append("y0", String(y0));
-  form.append("x1", String(x1));
-  form.append("y1", String(y1));
-  const res = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/signature`, {
+  const query = new URLSearchParams({ x0: String(x0), y0: String(y0), x1: String(x1), y1: String(y1) });
+  const res = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/signature?${query}`, {
     method: "POST",
-    body: form,
+    headers: { "Content-Type": file.type || "application/octet-stream" },
+    body: file,
   });
   return json(res);
 }

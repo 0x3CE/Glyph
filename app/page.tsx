@@ -2,6 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { BrandMark } from "@/components/BrandMark";
 
+// Plain link, not Buy Me a Coffee's widget script: the site promises no
+// third-party tracking, and the widget would load one on every visit.
+const BUY_ME_A_COFFEE_URL = "https://buymeacoffee.com/0x3CE";
+
 export const metadata: Metadata = {
   title: "Glyph — l'éditeur PDF qui modifie vraiment le texte",
   description:
@@ -16,11 +20,11 @@ const faqItems = [
   },
   {
     q: "Mes fichiers sont-ils stockés quelque part ?",
-    a: "Non. Chaque PDF est gardé en mémoire le temps de la session d'édition, jamais écrit sur disque côté serveur, et disparaît à la fermeture.",
+    a: "Non. Chaque PDF est gardé en mémoire le temps de la session d'édition, jamais écrit sur disque côté serveur, et supprimé dès que tu fermes l'onglet (ou après 30 minutes d'inactivité).",
   },
   {
     q: "Est-ce que la police d'origine est toujours conservée ?",
-    a: "Quand c'est possible, oui — Glyph réutilise la police d'origine du document. Beaucoup de PDF (Word, imprimantes virtuelles) embarquent des polices en sous-ensemble qui ne couvrent pas tous les caractères ; dans ce cas Glyph bascule sur une police système proche et te le signale, plutôt que d'afficher un caractère manquant en silence.",
+    a: "Quand c'est possible, oui — Glyph réutilise la police d'origine du document. Beaucoup de PDF (Word, imprimantes virtuelles) embarquent des polices en sous-ensemble qui ne couvrent pas tous les caractères ; dans ce cas Glyph réutilise la même famille depuis son catalogue d'environ 240 polices libres (Roboto, Montserrat, Lato…), ou un équivalent aux mêmes métriques pour les polices propriétaires (Calibri, Arial, Times…), et te prévient quand le résultat n'est pas exactement la police d'origine.",
   },
   {
     q: "Ça marche sur des tableaux ?",
@@ -68,6 +72,16 @@ export default function LandingPage() {
           <span className="brand-name">Glyph</span>
         </Link>
         <nav className="site-nav">
+          <a
+            href={BUY_ME_A_COFFEE_URL}
+            className="btn btn-ghost"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Offrir un café (Buy Me a Coffee)"
+          >
+            <span aria-hidden="true">☕</span>
+            <span className="nav-coffee-label">Offrir un café</span>
+          </a>
           <Link href="/editor" className="btn btn-accent">
             Ouvrir l&apos;éditeur
           </Link>
@@ -185,6 +199,22 @@ export default function LandingPage() {
         </div>
       </section>
 
+      <section className="section support" id="soutenir">
+        <div className="support-card">
+          <div>
+            <p className="section-label">Soutenir le projet</p>
+            <h2 className="support-title">Gratuit, open source, sans pub ni traçage</h2>
+            <p className="support-text">
+              Glyph est développé sur mon temps libre. S&apos;il t&apos;a évité une galère avec un PDF, tu peux
+              m&apos;offrir un café : ça aide à payer l&apos;hébergement et à continuer de l&apos;améliorer.
+            </p>
+          </div>
+          <a href={BUY_ME_A_COFFEE_URL} className="btn btn-coffee btn-lg" target="_blank" rel="noopener noreferrer">
+            <span aria-hidden="true">☕</span> Offrir un café
+          </a>
+        </div>
+      </section>
+
       <section className="cta-band">
         <div className="section">
           <div>
@@ -199,7 +229,12 @@ export default function LandingPage() {
 
       <footer className="site-footer">
         <span>© {new Date().getFullYear()} Glyph</span>
-        <span>Édition PDF réelle — pas un calque.</span>
+        <span className="footer-links">
+          <span>Édition PDF réelle — pas un calque.</span>
+          <a href={BUY_ME_A_COFFEE_URL} target="_blank" rel="noopener noreferrer">
+            Buy me a coffee
+          </a>
+        </span>
       </footer>
 
       <script

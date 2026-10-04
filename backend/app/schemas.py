@@ -45,3 +45,9 @@ class EditResponse(BaseModel):
 
 class SignatureResponse(BaseModel):
     bbox: tuple[float, float, float, float]
+
+
+class HistoryResponse(BaseModel):
+    cursor: int
+    can_undo: bool
+    can_redo: bool

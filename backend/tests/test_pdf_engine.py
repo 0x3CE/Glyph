@@ -12,7 +12,9 @@ doesn't require adding a test framework to run it.
 from __future__ import annotations
 
 import io
+import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -22,6 +24,7 @@ import pymupdf
 from fontTools.ttLib import TTFont
 
 import app.pdf_engine as pdf_engine
+from app.pdf_engine import font_catalog
 from app.pdf_engine import Block, Line, Span, UnsupportedSignatureFileError, apply_block_edit, apply_signature, extract_structure
 
 
@@ -283,25 +286,27 @@ class BundledFontFallbackTests(unittest.TestCase):
     def tearDown(self):
         pdf_engine.fonts._SYSTEM_FONT_DIR = self._real_system_font_dir
 
-    def test_bundled_fonts_exist_on_disk(self):
-        for filename in {
-            f
-            for family in pdf_engine._BUNDLED_FAMILIES.values()
-            for f in family.values()
-        }:
-            path = pdf_engine._BUNDLED_FONT_DIR / filename
-            self.assertTrue(path.is_file(), f"missing bundled font: {path}")
+    def test_committed_bundled_fonts_exist_on_disk(self):
+        # Liberation and Open Sans are committed (the rest of the catalog is
+        # fetched by scripts/fetch_fonts.py at build time): they're the floor
+        # every environment is guaranteed to have.
+        for key in ("arial", "times new roman", "courier new", "open sans"):
+            family = font_catalog.BY_KEY[key]
+            for filename in family.files.values():
+                path = pdf_engine._BUNDLED_FONT_DIR / family.directory / filename
+                self.assertTrue(path.is_file(), f"missing bundled font: {path}")
 
     def test_named_family_falls_back_to_bundled_font(self):
+        liberation = pdf_engine._BUNDLED_FONT_DIR / "liberation"
         self.assertEqual(
-            pdf_engine._system_font_path("arial", False, False),
-            str(pdf_engine._BUNDLED_FONT_DIR / "LiberationSans-Regular.ttf"),
+            pdf_engine._family_font("arial", False, False),
+            (str(liberation / "LiberationSans-Regular.ttf"), False),
         )
         self.assertEqual(
-            pdf_engine._system_font_path("times new roman", True, True),
-            str(pdf_engine._BUNDLED_FONT_DIR / "LiberationSerif-BoldItalic.ttf"),
+            pdf_engine._family_font("times new roman", True, True),
+            (str(liberation / "LiberationSerif-BoldItalic.ttf"), False),
         )
-        self.assertIsNone(pdf_engine._system_font_path("comic sans", False, False))
+        self.assertIsNone(pdf_engine._family_font("not a real family", False, False))
 
     def test_euro_sign_and_typographic_punctuation_survive_the_fallback(self):
         doc, page = _page(width=400)
@@ -319,6 +324,112 @@ class BundledFontFallbackTests(unittest.TestCase):
         text = page.get_text()
         self.assertIn("€", text)
         self.assertIn("«Test»", text)
+
+
+def _require_bundled(key: str):
+    family = font_catalog.BY_KEY[key]
+    regular = pdf_engine._BUNDLED_FONT_DIR / family.directory / family.files[font_catalog.REGULAR]
+    if not regular.is_file():
+        raise unittest.SkipTest(f"{key} not fetched -- run scripts/fetch_fonts.py")
+
+
+class FontCatalogTests(unittest.TestCase):
+    """The bundled catalog (`font_catalog.CATALOG`): mapping a PDF's font
+    name to the right family, and picking the closest file for it."""
+
+    def setUp(self):
+        self._real_system_font_dir = pdf_engine.fonts._SYSTEM_FONT_DIR
+        pdf_engine.fonts._SYSTEM_FONT_DIR = Path("/nonexistent-on-purpose")
+
+    def tearDown(self):
+        pdf_engine.fonts._SYSTEM_FONT_DIR = self._real_system_font_dir
+
+    def test_font_names_resolve_to_the_most_specific_family(self):
+        cases = {
+            "ABCDEF+Calibri-Bold": "calibri",
+            "Calibri,Italic": "calibri",
+            "ArialMT": "arial",
+            "Arial-BoldMT": "arial",
+            "ArialNarrow-Bold": "arial narrow",
+            "TimesNewRomanPSMT": "times new roman",
+            "HelveticaNeue-Light": "helvetica",
+            "Roboto-Regular": "roboto",
+            "RobotoMono-Bold": "roboto mono",
+            "RobotoCondensed-Italic": "roboto condensed",
+            "AdobeGaramondPro-Regular": "eb garamond",
+            "CormorantGaramond-Bold": "cormorant garamond",
+            "ITCFranklinGothic-Book": "libre franklin",
+            "SourceSansPro-Regular": "source sans 3",
+            "PlayfairDisplay-Bold": "playfair display",
+            "Inter-SemiBold": "inter",
+            "CMR10": "latin modern roman",
+            "SegoeUI-Bold": "segoe ui",
+        }
+        for name, expected in cases.items():
+            with self.subTest(name=name):
+                self.assertEqual(pdf_engine._family_for_original(name), expected)
+
+    def test_short_needles_only_match_as_a_prefix(self):
+        # "inter" / "cmr" must not fire inside an unrelated longer name.
+        self.assertIsNone(pdf_engine._family_for_original("WinterSans-Regular"))
+        self.assertIsNone(pdf_engine._family_for_original("ArcMRegular"))
+
+    def test_every_catalog_family_has_a_regular_style_and_a_license(self):
+        for family in font_catalog.CATALOG:
+            with self.subTest(family=family.key):
+                self.assertIn(font_catalog.REGULAR, family.files)
+                directory = pdf_engine._BUNDLED_FONT_DIR / family.directory
+                if (directory / family.files[font_catalog.REGULAR]).is_file():
+                    self.assertTrue((directory / family.license_file).is_file())
+
+    def test_missing_style_degrades_to_the_closest_one(self):
+        _require_bundled("oswald")  # no italic at all
+        path, same = pdf_engine._family_font("oswald", True, True)
+        self.assertTrue(path.endswith("Oswald-Bold.ttf"), path)
+        self.assertTrue(same)
+
+    def _edit(self, font_name: str, new_text: str, flags: int = 0):
+        doc, page = _page(width=400)
+        page.insert_text((40, 50), "Bonjour le monde", fontsize=11, fontname="helv")
+        blocks = extract_structure(page)
+        block = blocks[0]
+        original_span = block.lines[0].spans[0]
+        block.lines[0].spans[0] = Span(**{**original_span.__dict__, "font": font_name, "flags": flags})
+        substituted, _bbox = apply_block_edit(doc, page, block, new_text, all_blocks=blocks)
+        return substituted, {f[3].split("+")[-1] for f in page.get_fonts(full=True)}, page
+
+    def test_bundled_copy_of_the_original_typeface_is_not_reported_as_substituted(self):
+        _require_bundled("montserrat")
+        substituted, fonts, _page_ = self._edit("Montserrat-Regular", "Salut le monde")
+        self.assertFalse(substituted)
+        self.assertTrue(any("Montserrat" in f for f in fonts), fonts)
+
+    def test_metric_clone_of_a_proprietary_font_is_reported_as_substituted(self):
+        _require_bundled("calibri")
+        substituted, fonts, _page_ = self._edit("Calibri", "Salut le monde")
+        self.assertTrue(substituted)
+        self.assertTrue(any("Carlito" in f for f in fonts), fonts)
+
+    def test_characters_missing_from_closer_families_fall_back_to_dejavu(self):
+        _require_bundled("verdana")
+        # Liberation Sans has no check mark; DejaVu Sans does.
+        self.assertFalse(pdf_engine._font_covers_text(pdf_engine._family_font("arial", False, False)[0], "\u2713"))
+        _substituted, fonts, page = self._edit("ArialMT", "Validé \u2713")
+        self.assertTrue(any("DejaVu" in f for f in fonts), fonts)
+        self.assertIn("\u2713", page.get_text())
+
+    def test_coverage_fallback_skips_system_fonts(self):
+        # On macOS, "verdana" resolves to the real system Verdana first --
+        # which has no check mark either. The coverage tier must go straight
+        # to the bundled DejaVu, or the line ends up in Base-14 and loses
+        # its Euro sign too.
+        _require_bundled("verdana")
+        with tempfile.TemporaryDirectory() as fake_system:
+            shutil.copy(pdf_engine._family_font("arial", False, False)[0], Path(fake_system) / "Verdana.ttf")
+            pdf_engine.fonts._SYSTEM_FONT_DIR = Path(fake_system)
+            _substituted, fonts, page = self._edit("Helvetica", "1 234,56 \u20ac \u2713")
+        self.assertTrue(any("DejaVu" in f for f in fonts), fonts)
+        self.assertIn("\u20ac \u2713", page.get_text())
 
 
 class Type3WeightMatchingTests(unittest.TestCase):

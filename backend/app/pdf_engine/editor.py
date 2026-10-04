@@ -205,7 +205,13 @@ def apply_block_edit(
         # fallback itself required substitution -- not just that a
         # fallback was computed but never needed (e.g. every run resolved
         # to a reused original span).
-        substituted = fallback_font.substituted and any(fc is fallback_font for _t, fc, _c, _s in resolved)
+        # A bundled copy of the original typeface itself (`same_typeface`)
+        # isn't a substitution the user needs to hear about.
+        substituted = (
+            fallback_font.substituted
+            and not fallback_font.same_typeface
+            and any(fc is fallback_font for _t, fc, _c, _s in resolved)
+        )
         return substituted, (x0, y0, x0 + max(max_line_width, block_width), y0 + needed_height)
     finally:
         for fc in cleanup_choices:

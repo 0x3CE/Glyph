@@ -8,14 +8,16 @@ Aucune authentification. Les documents sont identifiés par un `document_id` opa
 
 ### `POST /api/documents`
 
-Upload un PDF. Corps : `multipart/form-data`, champ `file`.
+Upload un PDF. Corps : **les octets bruts du fichier** (`Content-Type: application/pdf`), pas du `multipart/form-data` : le backend les lit en flux, en mémoire uniquement, et coupe dès que la limite est dépassée (voir [`DECISIONS.md`](./DECISIONS.md#uploads-en-corps-brut-pas-en-multipart)).
 
 ```json
 // 200
 { "document_id": "34ca6796213f49efb648acc326c472d0", "page_count": 3 }
 ```
 
-`400` si le fichier n'est pas un PDF valide (échec d'ouverture, protégé par mot de passe, ou parsing tué par la sandbox — timeout/mémoire/CPU, voir [`DECISIONS.md`](./DECISIONS.md#isoler-le-parsing-pdf-dans-un-sous-processus)). `413` si le fichier dépasse `MAX_UPLOAD_MB` (20 Mo par défaut).
+`400` si le fichier n'est pas un PDF valide (échec d'ouverture, protégé par mot de passe, ou parsing tué par la sandbox — timeout/mémoire/CPU, voir [`DECISIONS.md`](./DECISIONS.md#isoler-le-parsing-pdf-dans-un-sous-processus)). `413` si le fichier dépasse `MAX_UPLOAD_MB` (20 Mo par défaut). `503` si le serveur est à pleine capacité (mémoire ou sandbox, voir [`DECISIONS.md`](./DECISIONS.md#borner-la-mémoire-et-la-concurrence)) : réessayer plus tard.
+
+Toutes les routes ci-dessous peuvent aussi répondre `503` pour la même raison, et `404` pour un document expiré (30 minutes sans activité par défaut, `DOCUMENT_TTL_MINUTES`).
 
 ---
 
@@ -100,7 +102,7 @@ Un `\n` dans `text` crée une ligne supplémentaire (utile pour un bloc multi-li
 
 ### `POST /api/documents/{document_id}/pages/{page_index}/signature`
 
-Place une signature sur la page. Corps : `multipart/form-data`, champ `file` (PDF, PNG ou JPEG — le type est détecté à partir des octets du fichier, pas de son nom ni du content-type déclaré) et quatre champs `x0`, `y0`, `x1`, `y1` (le rectangle cible, en points PDF, origine en haut à gauche — mêmes conventions que `bbox` ailleurs dans cette API).
+Place une signature sur la page. Corps : les octets bruts du fichier (PDF, PNG ou JPEG — le type est détecté à partir des octets du fichier, pas de son nom ni du `Content-Type` déclaré). Le rectangle cible passe en paramètres de requête `?x0=&y0=&x1=&y1=` (en points PDF, origine en haut à gauche — mêmes conventions que `bbox` ailleurs dans cette API).
 
 Un PDF source est incrusté en vectoriel (`page.show_pdf_page`, sa première page uniquement) ; une image PNG/JPEG est insérée telle quelle (`page.insert_image`). Dans les deux cas, la signature est étirée pour remplir exactement le rectangle donné — pas de préservation automatique du ratio d'origine, à gérer côté client si besoin (voir [`DECISIONS.md`](./DECISIONS.md)).
 
@@ -125,4 +127,4 @@ Aucun corps. Déplace le curseur dans la pile d'historique du document (clampé 
 
 ### `DELETE /api/documents/{document_id}`
 
-Libère le document de la mémoire. `{ "ok": true }` même si l'id n'existait pas déjà (idempotent). Le frontend actuel ne l'appelle pas — les documents restent en mémoire jusqu'au redémarrage du process (voir la limite décrite dans [`ARCHITECTURE.md`](./ARCHITECTURE.md#ce-qui-nest-pas-là)).
+Libère le document de la mémoire. `{ "ok": true }` même si l'id n'existait pas déjà (idempotent). Le frontend l'appelle quand l'onglet se ferme (`pagehide`, avec `keepalive`) et quand un autre PDF remplace le document courant ; sinon le document expire après `DOCUMENT_TTL_MINUTES` d'inactivité.

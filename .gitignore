@@ -40,3 +40,10 @@ backend/**/__pycache__
 
 # TypeScript
 *.tsbuildinfo
+
+# Bundled fonts: only Liberation + Open Sans are committed (the guaranteed
+# floor); the rest of the catalog is fetched by backend/scripts/fetch_fonts.py
+# (run at Docker build time, and once locally).
+backend/app/fonts/*
+!backend/app/fonts/liberation/
+!backend/app/fonts/opensans/

@@ -8,13 +8,16 @@ CID-keyed subsets with NO usable cmap table -- extracting those font bytes
 and reusing them for arbitrary new text silently produces garbage glyphs.
 We only reuse an original embedded font when we can verify (via fontTools)
 that it has a cmap covering every character of the new text; otherwise we
-fall back to a metrically-matched Base14 font and report the substitution.
+fall back to the same family matched by name from a bundled catalog of
+free fonts (or a metric-compatible clone of it), with metric compensation,
+and report the substitution.
 
 This is a package, not a single module, split by concern for easier
 pickup/debugging (see docs/DECISIONS.md):
 - `types`: the Span/Line/Block structural model and small shared types.
 - `structure`: turning a PyMuPDF page into that model.
 - `fonts`: font selection (`pick_font`) and metric matching.
+- `font_catalog`: the bundled free font families and their name aliases.
 - `type3_weight`: ink-ratio-based weight estimation for Type3 sources.
 - `geometry`: sibling-aware bounds for redaction/growth.
 - `formatting_diff`: diff-based per-run formatting preservation.
@@ -31,25 +34,21 @@ from __future__ import annotations
 
 from .fonts import (
     _BASE14,
-    _BUNDLED_FAMILIES,
     _BUNDLED_FONT_DIR,
-    _FAMILY_ALIASES,
-    _LIBERATION_MONO,
-    _LIBERATION_SANS,
-    _LIBERATION_SERIF,
+    _GENERIC_FAMILY,
     _SYSTEM_FAMILIES,
     _SYSTEM_FONT_DIR,
     FontChoice,
     _base14_for,
+    _category_for,
     _extract_span_font,
     _family_for_original,
+    _family_font,
     _font_covers_text,
     _font_xref_for_name,
-    _generic_family_for_flags,
     _measure,
     _metric_match_scale,
     _normalize_font_name,
-    _system_font_path,
     pick_font,
 )
 from .formatting_diff import _build_formatted_segments, _char_span_map, _span_for_change
@@ -80,7 +79,6 @@ from .types import (
     EncryptedPdfError,
     Line,
     Span,
-    StructureResult,
     _line_from_raw,
     rgb_int_to_tuple,
 )
@@ -97,7 +95,6 @@ __all__ = [
     "FontChoice",
     "Line",
     "Span",
-    "StructureResult",
     "UnsupportedSignatureFileError",
     "apply_block_edit",
     "apply_signature",

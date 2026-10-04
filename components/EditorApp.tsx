@@ -1,13 +1,13 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import Link from "next/link";
 import { PdfPage } from "@/components/PdfPage";
 import type { PendingSignature } from "@/components/PdfPage";
 import { SignatureModal } from "@/components/SignatureModal";
 import { BrandMark } from "@/components/BrandMark";
-import { documentDownloadUrl, redo, undo, uploadDocument } from "@/lib/api-client";
+import { deleteDocument, documentDownloadUrl, redo, undo, uploadDocument } from "@/lib/api-client";
 
 const SCALE = 1.5;
 
@@ -27,11 +27,27 @@ export function EditorApp() {
   const [showSignatureModal, setShowSignatureModal] = useState(false);
   const [pendingSignature, setPendingSignature] = useState<PendingSignature | null>(null);
 
+  // The server keeps each document in memory until it expires: free it as
+  // soon as it's no longer reachable from this tab (another PDF opened, tab
+  // closed). Not done in an effect cleanup, which React's StrictMode runs
+  // on mount in dev and would delete the document being edited.
+  const documentIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const onPageHide = (event: PageTransitionEvent) => {
+      // A page kept in the back/forward cache may come back: keep its document.
+      if (!event.persisted && documentIdRef.current) deleteDocument(documentIdRef.current);
+    };
+    window.addEventListener("pagehide", onPageHide);
+    return () => window.removeEventListener("pagehide", onPageHide);
+  }, []);
+
   const loadFile = useCallback(async (file: File) => {
     setError(null);
     setLoading(true);
     try {
       const res = await uploadDocument(file);
+      if (documentIdRef.current) deleteDocument(documentIdRef.current);
+      documentIdRef.current = res.document_id;
       setDocumentId(res.document_id);
       setPageCount(res.page_count);
       setPageNumber(1);

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import os
+from typing import TypeVar
 
-from fastapi import FastAPI, Form, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from pydantic import BaseModel, ValidationError
 
 from . import documents
-from .isolation import SandboxError, run_isolated
+from .isolation import SandboxBusyError, SandboxError, run_isolated
 from .pdf_engine import (
     worker_add_signature,
     worker_apply_edit,
@@ -16,13 +18,11 @@ from .pdf_engine import (
     worker_validate_pdf,
 )
 from .schemas import (
-    BlockOut,
     EditRequest,
     EditResponse,
-    LineOut,
+    HistoryResponse,
     PageStructure,
     SignatureResponse,
-    SpanOut,
     UploadResponse,
 )
 
@@ -48,6 +48,8 @@ def _sandbox_error_to_http(
     not_found: dict[str, str] | None = None,
     bad_request: dict[str, str] | None = None,
 ) -> HTTPException:
+    if isinstance(e, SandboxBusyError):
+        return HTTPException(503, str(e))
     if not_found and e.kind in not_found:
         return HTTPException(404, not_found[e.kind])
     if bad_request and e.kind in bad_request:
@@ -55,66 +57,86 @@ def _sandbox_error_to_http(
     return HTTPException(422, f"failed to process PDF: {e}")
 
 
-@app.post("/api/documents", response_model=UploadResponse)
-async def upload(file: UploadFile) -> UploadResponse:
-    raw = await file.read()
-    if len(raw) > MAX_UPLOAD_BYTES:
-        raise HTTPException(413, f"file too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)")
+async def _read_body(request: Request, limit: int, what: str) -> bytes:
+    """The raw request body, read into memory only, and cut off as soon as
+    it exceeds `limit`. Uploads are sent as a raw body rather than
+    multipart: Starlette's multipart parser spools every file part over
+    1 MB to a temporary file on disk, and only lets us check the size once
+    the whole thing has been received."""
+    too_large = HTTPException(413, f"{what} too large (max {limit // (1024 * 1024)} MB)")
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > limit:
+        raise too_large
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > limit:
+            raise too_large
+    return bytes(body)
+
+
+Model = TypeVar("Model", bound=BaseModel)
+
+
+def _validated(model: type[Model], meta: object, **extra: object) -> Model:
+    """`meta` comes out of the sandbox, i.e. from a process that just parsed
+    an untrusted PDF: check its shape before anything else touches it."""
+    if not isinstance(meta, dict):
+        raise HTTPException(422, "failed to process PDF")
     try:
-        page_count = await run_in_threadpool(run_isolated, worker_validate_pdf, raw)
+        return model.model_validate({**meta, **extra})
+    except ValidationError as e:
+        raise HTTPException(422, "failed to process PDF") from e
+
+
+def _current_or_404(document_id: str) -> bytes:
+    pdf = documents.current(document_id)
+    if pdf is None:
+        raise HTTPException(404, "document not found")
+    return pdf
+
+
+def _push_or_error(document_id: str, new_pdf: bytes | None) -> None:
+    if new_pdf is None:
+        raise HTTPException(422, "failed to process PDF")
+    try:
+        stored = documents.push(document_id, new_pdf)
+    except documents.StoreFullError as e:
+        raise HTTPException(503, str(e)) from e
+    if not stored:
+        raise HTTPException(404, "document not found")
+
+
+@app.post("/api/documents", response_model=UploadResponse)
+async def upload(request: Request) -> UploadResponse:
+    raw = await _read_body(request, MAX_UPLOAD_BYTES, "file")
+    try:
+        meta, _ = await run_in_threadpool(run_isolated, worker_validate_pdf, raw)
+    except SandboxBusyError as e:
+        raise HTTPException(503, str(e)) from e
     except SandboxError as e:
         raise HTTPException(400, f"invalid PDF: {e}") from e
-    document_id = documents.create(raw)
+    page_count = _validated(UploadResponse, meta, document_id="pending").page_count
+    try:
+        document_id = documents.create(raw)
+    except documents.StoreFullError as e:
+        raise HTTPException(503, str(e)) from e
     return UploadResponse(document_id=document_id, page_count=page_count)
 
 
 @app.get("/api/documents/{document_id}/file")
 def download(document_id: str) -> Response:
-    state = documents.get(document_id)
-    if state is None:
-        raise HTTPException(404, "document not found")
-    return Response(content=state.current, media_type="application/pdf")
+    return Response(content=_current_or_404(document_id), media_type="application/pdf")
 
 
 @app.get("/api/documents/{document_id}/pages/{page_index}/structure", response_model=PageStructure)
 def structure(document_id: str, page_index: int) -> PageStructure:
-    state = documents.get(document_id)
-    if state is None:
-        raise HTTPException(404, "document not found")
+    pdf = _current_or_404(document_id)
     try:
-        result = run_isolated(worker_extract_structure, state.current, page_index)
+        meta, _ = run_isolated(worker_extract_structure, pdf, page_index)
     except SandboxError as e:
         raise _sandbox_error_to_http(e, not_found={"IndexError": "page not found"}) from e
-    return PageStructure(
-        page_index=page_index,
-        width=result.width,
-        height=result.height,
-        blocks=[
-            BlockOut(
-                id=b.id,
-                bbox=b.bbox,
-                text=b.text,
-                lines=[
-                    LineOut(
-                        bbox=line.bbox,
-                        spans=[
-                            SpanOut(
-                                text=s.text,
-                                bbox=s.bbox,
-                                font=s.font,
-                                size=s.size,
-                                color=s.color,
-                                flags=s.flags,
-                            )
-                            for s in line.spans
-                        ],
-                    )
-                    for line in b.lines
-                ],
-            )
-            for b in result.blocks
-        ],
-    )
+    return _validated(PageStructure, meta, page_index=page_index)
 
 
 @app.post(
@@ -122,20 +144,17 @@ def structure(document_id: str, page_index: int) -> PageStructure:
     response_model=EditResponse,
 )
 def edit_block(document_id: str, page_index: int, block_id: str, body: EditRequest) -> EditResponse:
-    state = documents.get(document_id)
-    if state is None:
-        raise HTTPException(404, "document not found")
+    pdf = _current_or_404(document_id)
     try:
-        new_pdf_bytes, substituted, new_bbox = run_isolated(
-            worker_apply_edit, state.current, page_index, block_id, body.text
-        )
+        meta, new_pdf = run_isolated(worker_apply_edit, pdf, page_index, block_id, body.text)
     except SandboxError as e:
         raise _sandbox_error_to_http(
             e, not_found={"IndexError": "page not found", "LookupError": "block not found"}
         ) from e
 
-    state.push(new_pdf_bytes)
-    return EditResponse(font_substituted=substituted, new_bbox=new_bbox)
+    response = _validated(EditResponse, meta)
+    _push_or_error(document_id, new_pdf)
+    return response
 
 
 @app.post(
@@ -143,23 +162,19 @@ def edit_block(document_id: str, page_index: int, block_id: str, body: EditReque
     response_model=SignatureResponse,
 )
 async def add_signature(
+    request: Request,
     document_id: str,
     page_index: int,
-    file: UploadFile,
-    x0: float = Form(...),
-    y0: float = Form(...),
-    x1: float = Form(...),
-    y1: float = Form(...),
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
 ) -> SignatureResponse:
-    state = documents.get(document_id)
-    if state is None:
-        raise HTTPException(404, "document not found")
-    raw = await file.read()
-    if len(raw) > MAX_SIGNATURE_BYTES:
-        raise HTTPException(413, f"signature file too large (max {MAX_SIGNATURE_BYTES // (1024 * 1024)} MB)")
+    pdf = _current_or_404(document_id)
+    raw = await _read_body(request, MAX_SIGNATURE_BYTES, "signature file")
     try:
-        new_pdf_bytes, new_bbox = await run_in_threadpool(
-            run_isolated, worker_add_signature, state.current, page_index, raw, (x0, y0, x1, y1)
+        meta, new_pdf = await run_in_threadpool(
+            run_isolated, worker_add_signature, pdf, page_index, raw, (x0, y0, x1, y1)
         )
     except SandboxError as e:
         raise _sandbox_error_to_http(
@@ -168,26 +183,25 @@ async def add_signature(
             bad_request={"UnsupportedSignatureFileError": str(e)},
         ) from e
 
-    state.push(new_pdf_bytes)
-    return SignatureResponse(bbox=new_bbox)
+    response = _validated(SignatureResponse, meta)
+    _push_or_error(document_id, new_pdf)
+    return response
 
 
-@app.post("/api/documents/{document_id}/undo")
-def undo(document_id: str) -> dict:
-    state = documents.get(document_id)
+def _history(state: documents.DocumentState | None) -> HistoryResponse:
     if state is None:
         raise HTTPException(404, "document not found")
-    state.undo()
-    return {"cursor": state.cursor, "can_undo": state.cursor > 0, "can_redo": state.cursor < len(state.history) - 1}
+    return HistoryResponse(cursor=state.cursor, can_undo=state.can_undo, can_redo=state.can_redo)
 
 
-@app.post("/api/documents/{document_id}/redo")
-def redo(document_id: str) -> dict:
-    state = documents.get(document_id)
-    if state is None:
-        raise HTTPException(404, "document not found")
-    state.redo()
-    return {"cursor": state.cursor, "can_undo": state.cursor > 0, "can_redo": state.cursor < len(state.history) - 1}
+@app.post("/api/documents/{document_id}/undo", response_model=HistoryResponse)
+def undo(document_id: str) -> HistoryResponse:
+    return _history(documents.undo(document_id))
+
+
+@app.post("/api/documents/{document_id}/redo", response_model=HistoryResponse)
+def redo(document_id: str) -> HistoryResponse:
+    return _history(documents.redo(document_id))
 
 
 @app.delete("/api/documents/{document_id}")

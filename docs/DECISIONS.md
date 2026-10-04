@@ -128,6 +128,20 @@ Le pire qu'un PDF hostile peut faire est donc de gâcher un sous-processus de co
 
 **Pourquoi `spawn` et pas `fork`** : `fork` copierait les descripteurs de fichiers et l'état déjà chargé des extensions C du process parent (uvicorn, threads inclus) — dangereux à combiner avec des threads, et ça viderait une partie de l'intérêt de l'isolation. `spawn` redémarre un interpréteur propre à chaque appel : plus lent (~quelques dizaines à centaines de ms de coût d'import par appel), mais chaque appel part d'un état vierge.
 
+**Le sous-processus est traité comme potentiellement compromis** (ajouté après un audit de sécurité) : un PDF qui exploiterait une faille mémoire de MuPDF contrôlerait l'enfant. Or `multiprocessing` renvoie normalement les résultats en pickle, et dépickler des données qu'on ne contrôle pas revient à exécuter du code : l'enfant compromis aurait pu exécuter du code dans le process API, ce qui annule l'isolation. Désormais :
+
+- chaque worker renvoie `(meta, blob)` : des métadonnées JSON et des octets bruts (le PDF ré-enregistré) ou rien ;
+- les deux transitent par `send_bytes`/`recv_bytes`, deux trames dont la taille est bornée (`SANDBOX_MAX_RESULT_MB`) ;
+- le parent ne fait que `json.loads`, puis valide `meta` avec les modèles Pydantic de réponse avant de s'en servir (`_validated` dans `main.py`).
+
+Le pickle ne sert plus que dans le sens parent → enfant (le passage d'arguments de `spawn`), où c'est l'émetteur qui est de confiance.
+
+**Délai de garde plutôt que `poll`** : un enfant qui envoie l'en-tête de longueur d'une trame puis se bloque laisserait `recv_bytes` attendre indéfiniment. Un `threading.Timer` tue l'enfant au bout de `TIMEOUT_SECONDS`, ce qui ferme le pipe et débloque la lecture avec `EOFError`.
+
+**Dossier temporaire par appel** : `pdf_engine/fonts.py` écrit des fichiers temporaires (polices extraites du PDF, que PyMuPDF veut sous forme de chemin). Ils vont dans un dossier propre à l'appel (`tempfile.tempdir` de l'enfant). Le parent supprime toujours ce dossier, même quand il a dû tuer l'enfant : avant, un worker tué sur timeout laissait ses fichiers dans `/tmp`. Le dossier est en RAM (`/dev/shm`) quand la plateforme en a un, ce qui est le cas sur Linux en production.
+
+**Limite assumée** : c'est une frontière de ressources, pas d'isolation au sens système. L'enfant tourne avec le même utilisateur et garde l'accès au système de fichiers et au réseau. Aller plus loin demanderait seccomp, des namespaces ou un conteneur par appel.
+
 **Limite connue, acceptée** : `RLIMIT_AS` n'est pas fiable sur macOS (utilisé en dev local) — `_set_limits()` avale l'erreur silencieusement dans ce cas et retombe uniquement sur le timeout. Sur Linux (Render, la cible de déploiement), les deux limites s'appliquent normalement.
 
 ## PDF protégés par mot de passe : rejeter tôt, avec un message clair
@@ -226,7 +240,7 @@ Aucun test automatisé n'est committé dans le repo (`backend/smoke_test.py` est
 
 **Demandé par l'utilisateur** : le moteur avait grossi jusqu'à ~1100 lignes dans un seul fichier au fil des sections ci-dessus — assez pour rendre une reprise ou un debug futur plus lent que nécessaire. Éclaté en `backend/app/pdf_engine/`, un module par responsabilité :
 
-- `types.py` — le modèle Span/Line/Block et les petits types partagés (`StructureResult`, `EncryptedPdfError`).
+- `types.py` — le modèle Span/Line/Block et les petits types partagés (`EncryptedPdfError`).
 - `structure.py` — `extract_structure` (page PyMuPDF → modèle ci-dessus).
 - `fonts.py` — sélection de police (`pick_font`), extraction de police embarquée, correspondance métrique.
 - `type3_weight.py` — toute la mesure par encre pour les polices Type3 (voir section ci-dessus).
@@ -248,3 +262,46 @@ Aucun test automatisé n'est committé dans le repo (`backend/smoke_test.py` est
 **Deux mécanismes d'incrustation, pas un seul** : un PDF source est placé avec `page.show_pdf_page(rect, src, 0)` — il reste vectoriel, net à n'importe quel zoom, exactement comme le texte réinséré par `apply_block_edit`. Une image (PNG/JPEG, y compris le dessin du canvas) est placée avec `page.insert_image(rect, stream=...)`. Les deux étirent leur source pour remplir exactement le rectangle donné par le frontend — pas de logique de préservation de ratio côté backend, puisque le cadre de placement (`components/SignaturePlacer.tsx`) est librement redimensionnable par l'utilisateur ; ce que montre l'aperçu pendant le placement est ce qui sera réellement incrusté.
 
 **Limite acceptée** : rien n'empêche l'utilisateur d'étirer une signature hors de ses proportions d'origine en redimensionnant le cadre de façon asymétrique — pas de verrouillage du ratio (ex. touche Maj) pour l'instant. Idem pour l'aperçu d'un PDF importé dans le cadre de placement : sans rendu pdf.js à la volée, seul un espace réservé générique ("PDF") s'affiche pendant le placement, contrairement à l'aperçu image en direct pour un PNG/JPEG ou un dessin — l'utilisateur voit le rendu réel seulement après validation.
+
+## Catalogue de polices libres embarquées
+
+**Demandé par l'utilisateur** : embarquer un maximum de polices libres. Avant, le repli ne connaissait que 7 familles (Arial, Arial Narrow, Times New Roman, Courier New, Georgia, Verdana, Tahoma), servies par les polices système macOS en local et par Liberation en production (Linux). Tout le reste (Calibri, Roboto, Montserrat…) retombait sur une famille générique, et le rendu différait entre la machine de dev et Render.
+
+**Ce qu'on fait** (`pdf_engine/font_catalog.py`) : un catalogue unique d'environ 240 familles, chacune avec ses alias de nom, sa catégorie, son répertoire sous `app/fonts/` et sa source de téléchargement. `fonts.py` s'en sert à l'exécution ; `scripts/fetch_fonts.py` s'en sert pour télécharger les fichiers. Deux types d'entrées :
+
+- **La police d'origine elle-même** (`same_typeface=True`) : familles Google Fonts, Latin Modern (documents LaTeX : `CMR10` et les autres polices Computer Modern), DejaVu. Le frontend n'affiche alors **pas** l'avertissement de substitution, puisque ce n'en est pas une du point de vue de l'utilisateur. La compensation métrique reste active quand même : un PDF en Montserrat SemiBold rendu en Montserrat Bold a besoin de ce petit correctif de chasse.
+- **Un clone métrique d'une police propriétaire** (`same_typeface=False`) : Carlito ↔ Calibri, Caladea ↔ Cambria, Gelasio ↔ Georgia, Nimbus Sans Narrow ↔ Arial/Helvetica Narrow (ce qui comble le trou noté plus haut : avant, Arial Narrow n'avait aucune chasse condensée en production), et les URW base35 (Palatino, Century Schoolbook, Century Gothic/Avant Garde, Bookman, Zapf Chancery). Même chasse glyphe par glyphe quand le clone est métriquement compatible.
+
+**Correspondance des noms** (`match_family`) : les alias sont testés du plus long au plus court, pour que `robotomono` gagne sur `roboto`, `arialnarrow` sur `arial` et `cormorantgaramond` sur `garamond`. Un alias de 6 caractères ou plus est cherché n'importe où dans le nom (`AdobeGaramondPro`, `ITCFranklinGothic`, `NeueHaasHelvetica`). Un alias plus court ne marche qu'en préfixe : sinon `inter` matcherait dans `WinterSans` et `cmr` dans n'importe quel nom contenant ces trois lettres.
+
+**Ordre de repli** : famille nommée (police système exacte sur macOS, sinon catalogue) → famille générique de la catégorie (la catégorie vient du catalogue si le nom est connu, sinon des `flags`, que beaucoup de producteurs PDF ne remplissent pas) → DejaVu (couverture Unicode bien plus large : grec, cyrillique, symboles comme `✓` qui manquent à Liberation) → Base-14. Un style absent (famille sans italique, par exemple Oswald) se dégrade vers le style le plus proche, en gardant le gras plutôt que l'italique.
+
+**Pourquoi tout n'est pas commité** : le catalogue complet pèse environ 95 Mo. Le commiter alourdirait chaque clone du dépôt de façon permanente. Seuls Liberation et Open Sans sont commités : c'est le plancher garanti, dont dépendent aussi les tests existants et la mesure Type3. Le reste est téléchargé par `scripts/fetch_fonts.py`, lancé au build Docker et une fois en local (le script est idempotent). Une famille absente du disque est simplement sautée à l'exécution, sans erreur.
+
+**Intégrité des téléchargements** (ajouté après un audit de sécurité) : ces fichiers sont lus par FreeType et MuPDF, deux parseurs C. Une police piégée (miroir compromis, branche réécrite) est donc un vecteur d'attaque. Or `mirrors.ctan.org` redirige vers des miroirs tenus par des tiers, et les sources GitHub pointaient sur `master`. Désormais, `scripts/fonts.lock.json` (commité) fixe pour chaque fichier son URL exacte et son SHA-256 :
+- le build installe uniquement depuis ce fichier, et une empreinte qui ne correspond pas fait échouer le build (le fichier est supprimé) ;
+- `--refresh` est le seul mode qui fait confiance aux sources : il les résout de nouveau et réécrit le verrou, dont le diff se relit comme une mise à jour de dépendance ;
+- les sources elles-mêmes sont épinglées sur des commits fixes (URW, Selawik, licences Google Fonts) ;
+- les URL Google (`fonts.gstatic.com/s/<famille>/v<N>/…`) sont versionnées, donc stables. Les tests qui ont besoin d'une famille téléchargée se marquent `skip` si elle manque.
+
+**Sources** : l'API CSS de Google Fonts sert des TTF statiques complets, sans découpage `unicode-range`, à un client qui n'envoie pas de User-Agent ; c'est ce qui évite d'avoir à instancier nous-mêmes les polices variables. Les autres sources : URW base35 (GitHub Artifex), DejaVu et Selawik (archives de release GitHub), Latin Modern (CTAN). `mirrors.ctan.org` redirige vers un miroir aléatoire, dont certains ont un certificat TLS invalide, d'où les tentatives multiples dans le script. Les familles CJK et arabes (Noto Sans JP, Amiri…) sont volontairement exclues : plusieurs Mo par fichier, pour des écritures que le moteur ne gère de toute façon pas (pas de shaping, pas de RTL).
+
+## Borner la mémoire et la concurrence
+
+**Trouvé par un audit de sécurité** : le store en mémoire (`documents.py`) n'oubliait jamais rien. Pas d'expiration, un historique d'annulation sans plafond (chaque édition = une copie complète du PDF), et le frontend n'appelait jamais `DELETE`. Une boucle d'uploads de 20 Mo suffisait à faire tomber le process API, celui-là même que la sandbox protège. Séparément, aucune limite ne bornait le nombre de sandboxes simultanées : avec 40 threads dans le pool, 40 requêtes parallèles pouvaient demander jusqu'à 40 × 512 Mo.
+
+**Ce qu'on fait** :
+- un document inactif depuis `DOCUMENT_TTL_MINUTES` (30) est supprimé ;
+- le frontend appelle `DELETE` à la fermeture de l'onglet (`pagehide`, avec `keepalive`, sauf si la page part dans le cache avant/arrière) et quand un nouveau PDF remplace le courant. Pas dans le nettoyage d'un `useEffect` : le StrictMode de React l'exécute dès le montage en dev, ce qui supprimerait le document en cours d'édition ;
+- l'historique d'un document est plafonné à `DOCUMENT_MAX_MB` (60), en abandonnant d'abord les plus vieux états d'annulation ;
+- le store entier est plafonné à `STORE_MAX_MB` (200) et `MAX_DOCUMENTS` (200). Au-delà, l'upload ou l'édition reçoit un `503`. On n'évince pas le document de quelqu'un d'autre, sinon un attaquant pourrait vider les sessions des autres en uploadant en boucle. Une édition sacrifie d'abord son propre historique d'annulation avant d'être refusée ;
+- toutes les opérations du store passent par un verrou, puisque les routes tournent dans un pool de threads ;
+- au plus `SANDBOX_MAX_CONCURRENCY` (2) sandboxes tournent en même temps. Les requêtes suivantes attendent une place jusqu'à `SANDBOX_QUEUE_TIMEOUT_SECONDS` (20), puis reçoivent un `503`.
+
+Valeurs par défaut pensées pour une instance de 512 Mo à 1 Go : 2 × 512 Mo de sandbox (plafond rarement atteint) + 200 Mo de store.
+
+## Uploads en corps brut, pas en multipart
+
+**Trouvé par un audit de sécurité** : le parseur multipart de Starlette (`UploadFile`) écrit sur disque, dans un fichier temporaire, toute partie de plus de 1 Mo, alors que le site promet que rien n'est écrit sur disque. Et la limite de 20 Mo n'était vérifiée qu'après réception complète : un envoi de plusieurs Go remplissait `/tmp` avant d'être refusé.
+
+**Ce qu'on fait** : le PDF (et le fichier de signature) part en corps brut (`Content-Type: application/pdf`, ou le type de l'image). Le rectangle de la signature passe en paramètres de requête. `_read_body` (`main.py`) refuse d'emblée un `Content-Length` trop grand, puis lit le flux en mémoire et coupe dès que la limite est dépassée, ce qui couvre aussi un envoi chunked sans `Content-Length`. `python-multipart` n'est plus une dépendance.

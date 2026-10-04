@@ -73,13 +73,6 @@ def _line_from_raw(line: dict) -> Line:
     )
 
 
-@dataclass
-class StructureResult:
-    width: float
-    height: float
-    blocks: list[Block]
-
-
 class EncryptedPdfError(Exception):
     """Raised at upload time for a password-protected PDF. PyMuPDF happily
     opens one and reports a page count without a password, but every real

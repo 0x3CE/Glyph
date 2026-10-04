@@ -1,11 +1,12 @@
 """Font selection: choosing what to render new/edited text in.
 
-Three tiers, tried in order by `pick_font`: reuse the original embedded
-font if we can verify (via fontTools) it covers every character of the
-new text; otherwise match the original font's family by name against a
-real font file (system Arial/Times/etc. on macOS, or the bundled
-Liberation Fonts everywhere); otherwise fall back to a generic family by
-flags, and if all else fails, a PyMuPDF Base-14 font.
+Tiers, tried in order by `pick_font`: reuse the original embedded font
+if we can verify (via fontTools) it covers every character of the new
+text; otherwise match the original font's family by name against a real
+font file (system Arial/Times/etc. on macOS, or the bundled catalog of
+free fonts everywhere, see `font_catalog`); otherwise a generic family by
+category; then a wide-coverage family (DejaVu) for scripts the closer
+matches lack; and if all else fails, a PyMuPDF Base-14 font.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from pathlib import Path
 import pymupdf
 from fontTools.ttLib import TTFont
 
+from .font_catalog import BY_KEY, COVERAGE_FALLBACK, Style, match_family
 from .type3_weight import _TYPE3_DEFAULT_WEIGHT, _instantiate_weight, _is_type3_font
 from .types import FLAG_BOLD, FLAG_ITALIC, FLAG_MONOSPACE, FLAG_SERIF, Block, Span
 
@@ -53,18 +55,15 @@ def _base14_for(flags: int) -> str:
 # family by name (e.g. "ArialNarrow" in the PDF -> a real Arial Narrow) --
 # much closer to the original than a Base-14 alias would ever be.
 #
-# Two tiers, tried in order (see `_system_font_path`): the exact
-# proprietary font if this happens to be running on macOS (which ships
-# Arial/Times/Courier/etc. -- never true on the Linux server this also
-# deploys to), then the bundled Liberation Fonts (SIL OFL, `fonts/liberation/`)
-# as a family that's ALWAYS present regardless of OS. Liberation Sans/
-# Serif/Mono are metrically identical, glyph-for-glyph advance width, to
-# Arial/Times New Roman/Courier New respectively -- that's their whole
-# purpose -- so even the fallback tier reflows text the same way the real
-# font would have. There's no bundled substitute for Arial Narrow's actual
-# condensed metrics, or for Georgia/Verdana/Tahoma's specific designs, so
-# those degrade to the closest bundled family (still strictly better than
-# jumping straight to Base-14 Helvetica/Times).
+# Two sources, tried in order for a given family (see `_family_font`): the
+# exact proprietary file if this happens to be running on macOS (which
+# ships Arial/Times/Courier/etc. -- never true on the Linux server this
+# also deploys to), then the bundled catalog (`font_catalog.CATALOG`,
+# `app/fonts/`), present regardless of OS: the real typeface for free
+# families (Roboto, Montserrat, ...) and metric-compatible clones for
+# proprietary ones (Liberation Sans for Arial, Carlito for Calibri, Nimbus
+# Sans Narrow for Arial Narrow, ...), so even the fallback reflows text
+# the same way the real font would have.
 _SYSTEM_FONT_DIR = Path("/System/Library/Fonts/Supplemental")
 
 _SYSTEM_FAMILIES: dict[str, dict[tuple[bool, bool], str]] = {
@@ -112,57 +111,7 @@ _SYSTEM_FAMILIES: dict[str, dict[tuple[bool, bool], str]] = {
     },
 }
 
-_BUNDLED_FONT_DIR = Path(__file__).resolve().parent.parent / "fonts" / "liberation"
-
-_LIBERATION_SANS = {
-    (False, False): "LiberationSans-Regular.ttf",
-    (True, False): "LiberationSans-Bold.ttf",
-    (False, True): "LiberationSans-Italic.ttf",
-    (True, True): "LiberationSans-BoldItalic.ttf",
-}
-_LIBERATION_SERIF = {
-    (False, False): "LiberationSerif-Regular.ttf",
-    (True, False): "LiberationSerif-Bold.ttf",
-    (False, True): "LiberationSerif-Italic.ttf",
-    (True, True): "LiberationSerif-BoldItalic.ttf",
-}
-_LIBERATION_MONO = {
-    (False, False): "LiberationMono-Regular.ttf",
-    (True, False): "LiberationMono-Bold.ttf",
-    (False, True): "LiberationMono-Italic.ttf",
-    (True, True): "LiberationMono-BoldItalic.ttf",
-}
-
-_BUNDLED_FAMILIES: dict[str, dict[tuple[bool, bool], str]] = {
-    "arial": _LIBERATION_SANS,
-    "arial narrow": _LIBERATION_SANS,  # no condensed metrics bundled, but still Unicode-complete
-    "verdana": _LIBERATION_SANS,
-    "tahoma": _LIBERATION_SANS,
-    "times new roman": _LIBERATION_SERIF,
-    "georgia": _LIBERATION_SERIF,
-    "courier new": _LIBERATION_MONO,
-}
-
-# Fonts that don't exist as a real file on this system get mapped to the
-# closest widely-available family instead of falling all the way back to
-# Base-14. Ordered by specificity: narrower/more distinctive names first.
-_FAMILY_ALIASES: list[tuple[str, str]] = [
-    ("arialnarrow", "arial narrow"),
-    ("arial", "arial"),
-    ("helvetica", "arial"),
-    ("calibri", "arial"),
-    ("segoe", "verdana"),
-    ("tahoma", "tahoma"),
-    ("verdana", "verdana"),
-    ("timesnewroman", "times new roman"),
-    ("times", "times new roman"),
-    ("cambria", "times new roman"),
-    ("georgia", "georgia"),
-    ("garamond", "georgia"),
-    ("courier", "courier new"),
-    ("consolas", "courier new"),
-    ("lucidaconsole", "courier new"),
-]
+_BUNDLED_FONT_DIR = Path(__file__).resolve().parent.parent / "fonts"
 
 
 def _normalize_font_name(name: str) -> str:
@@ -173,32 +122,50 @@ def _normalize_font_name(name: str) -> str:
 
 
 def _family_for_original(font_name: str) -> str | None:
-    normalized = _normalize_font_name(font_name)
-    for needle, family in _FAMILY_ALIASES:
-        if needle in normalized:
-            return family
-    return None
+    return match_family(_normalize_font_name(font_name))
 
 
-def _generic_family_for_flags(flags: int) -> str:
+def _category_for(family: str | None, flags: int) -> str:
+    # The catalog knows a named family's category even when the PDF's
+    # descriptor flags don't say "serif" (common: many producers never set it).
+    if family in BY_KEY:
+        return BY_KEY[family].category
     if flags & FLAG_MONOSPACE:
-        return "courier new"
+        return "mono"
     if flags & FLAG_SERIF:
-        return "times new roman"
-    return "arial"
+        return "serif"
+    return "sans"
 
 
-def _system_font_path(family: str, bold: bool, italic: bool) -> str | None:
-    for font_dir, families in ((_SYSTEM_FONT_DIR, _SYSTEM_FAMILIES), (_BUNDLED_FONT_DIR, _BUNDLED_FAMILIES)):
-        variants = families.get(family)
-        if not variants:
-            continue
-        filename = variants.get((bold, italic)) or variants.get((False, False))
-        if not filename:
-            continue
-        path = font_dir / filename
-        if path.is_file():
-            return str(path)
+_GENERIC_FAMILY = {"sans": "arial", "serif": "times new roman", "mono": "courier new", "display": "arial"}
+
+
+def _style_candidates(bold: bool, italic: bool) -> list[Style]:
+    # Closest style first: a family without italics still keeps the bold.
+    return list(dict.fromkeys([(bold, italic), (bold, False), (False, italic), (False, False)]))
+
+
+def _family_font(family: str, bold: bool, italic: bool, *, system: bool = True) -> tuple[str, bool] | None:
+    """(path, same_typeface) of the best file for `family`, or None.
+
+    The real proprietary file wins when this happens to run on macOS
+    (always the same typeface, by definition); otherwise the bundled
+    catalog entry. A bundled style missing on disk (family without
+    italics, or a `scripts/fetch_fonts.py` run that never happened) degrades
+    to the closest style that is there.
+    """
+    system_files = _SYSTEM_FAMILIES.get(family) if system else None
+    if system_files:
+        for style in _style_candidates(bold, italic):
+            filename = system_files.get(style)
+            if filename and (_SYSTEM_FONT_DIR / filename).is_file():
+                return str(_SYSTEM_FONT_DIR / filename), True
+    bundled = BY_KEY.get(family)
+    if bundled:
+        for style in _style_candidates(bold, italic):
+            filename = bundled.files.get(style)
+            if filename and (_BUNDLED_FONT_DIR / bundled.directory / filename).is_file():
+                return str(_BUNDLED_FONT_DIR / bundled.directory / filename), bundled.same_typeface
     return None
 
 
@@ -227,6 +194,10 @@ class FontChoice:
     fontname: str
     fontfile: str | None  # always a real path on disk -- PyMuPDF's insert_textbox needs one, not bytes
     substituted: bool
+    # A bundled/system copy of the very typeface the PDF used (e.g. the real
+    # Montserrat): still `substituted` for metric compensation purposes,
+    # but nothing worth warning the user about.
+    same_typeface: bool = False
     _temp_path: str | None = None  # set when fontfile is a temp file we own and must clean up
 
     def cleanup(self) -> None:
@@ -280,17 +251,22 @@ def pick_font(doc: pymupdf.Document, page: pymupdf.Page, block: Block, new_text:
     bold = bool(span.flags & FLAG_BOLD)
     italic = bool(span.flags & FLAG_ITALIC)
 
-    # Prefer a real system font matching the original family by name (e.g.
-    # "ArialNarrow" -> actual Arial Narrow.ttf) -- much closer than a
-    # generic Base-14 alias, and it covers characters (Euro, accents, …)
-    # Base-14 doesn't.
-    named_family = _family_for_original(span.font)
-    if named_family:
-        path = _system_font_path(named_family, bold, italic)
-        if path and _font_covers_text(path, new_text):
-            return FontChoice(fontname=f"f{unique}", fontfile=path, substituted=True)
+    def from_family(family: str, *, system: bool = True) -> FontChoice | None:
+        found = _family_font(family, bold, italic, system=system)
+        if found and _font_covers_text(found[0], new_text):
+            return FontChoice(fontname=f"f{unique}", fontfile=found[0], substituted=True, same_typeface=found[1])
+        return None
 
-    generic_family = _generic_family_for_flags(span.flags)
+    # Prefer the original family matched by name (see `font_catalog`):
+    # the real typeface when it's bundled (Roboto -> Roboto), or its
+    # metric-compatible free clone (Calibri -> Carlito). Real font files
+    # also cover characters (Euro, accents, ...) Base-14 doesn't.
+    named_family = _family_for_original(span.font)
+    if named_family and (choice := from_family(named_family)):
+        return choice
+
+    category = _category_for(named_family, span.flags)
+    generic_family = _GENERIC_FAMILY[category]
 
     # `flags` is meaningless for a Type3 source (see `_closest_weight_by_ink`).
     # The ink-ratio measurement + cross-technology calibration below it
@@ -318,11 +294,18 @@ def pick_font(doc: pymupdf.Document, page: pymupdf.Page, block: Block, new_text:
                 f.write(font_bytes)
             return FontChoice(fontname=f"f{unique}", fontfile=tmp_path, substituted=True, _temp_path=tmp_path)
 
-    path = _system_font_path(generic_family, bold, italic)
-    if path and _font_covers_text(path, new_text):
-        return FontChoice(fontname=f"f{unique}", fontfile=path, substituted=True)
+    if choice := from_family(generic_family):
+        return choice
 
-    # Last resort: no system font files available on this machine at all.
+    # Text the closer families can't render (Greek, Cyrillic, symbols...):
+    # DejaVu covers far more of Unicode than any of them. Bundled files
+    # only: the "verdana" key would otherwise resolve to macOS's real
+    # Verdana, which lacks those very characters (real bug: one "✓" sent
+    # the whole line to Base-14, losing its "€" too).
+    if choice := from_family(COVERAGE_FALLBACK.get(category, COVERAGE_FALLBACK["sans"]), system=False):
+        return choice
+
+    # Last resort: no font file covers this text at all.
     return FontChoice(fontname=_base14_for(span.flags), fontfile=None, substituted=True)
 
 

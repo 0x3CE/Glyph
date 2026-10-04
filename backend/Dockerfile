@@ -8,6 +8,14 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+COPY scripts ./scripts
+
+# Only Liberation + Open Sans are committed; install the rest of the bundled
+# font catalog (~95 MB, ~240 free families -- see app/pdf_engine/font_catalog.py)
+# from scripts/fonts.lock.json: exact URLs, SHA-256 verified. A file whose hash
+# doesn't match fails the build; one that merely fails to download is skipped
+# (--allow-missing), fonts.py degrades to the next closest family at runtime.
+RUN python scripts/fetch_fonts.py --allow-missing
 
 # Non-root: this process opens and parses PDFs nobody here produced (see
 # docs/DECISIONS.md, "Isoler le parsing PDF dans un sous-processus") --

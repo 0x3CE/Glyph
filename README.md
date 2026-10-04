@@ -2,14 +2,14 @@
 
 Glyph edits text directly inside a PDF's content stream instead of drawing a patch on top of it. When you edit a line, the original glyphs are actually removed (via PDF redaction) and the new text is re-inserted in their place — not covered by a white rectangle with new text stacked over it.
 
-It's a small, focused, open-source tool: no accounts, no cloud storage, no tracking. Everything runs locally — your PDF stays in server memory for the duration of your session and is never written to disk.
+It's a small, focused, open-source tool: no accounts, no cloud storage, no tracking. Everything runs locally — your PDF stays in server memory for the duration of your session (deleted when you close the tab, or after 30 minutes of inactivity) and is never written to disk.
 
 ## How it works
 
 1. Open a PDF (uploaded to the local backend, kept in memory only).
 2. Click a line of text — an editor appears exactly where it is. Editing is always per line, including a field that visually spans several lines (an address, say) — see "Known limitations" below.
 3. Change the text and save.
-4. The backend removes the original glyphs (real redaction, not an overlay) and re-inserts the new text using the original font if it covers all the needed characters, or a close system font with metric compensation otherwise (you'll see a warning banner when that happens). If the line mixes styles (a bold word inside an otherwise plain sentence, say), Glyph diffs your edit against the original and keeps that word's exact original formatting wherever the surrounding edit left it untouched, instead of collapsing the whole line to one font (see `docs/DECISIONS.md`).
+4. The backend removes the original glyphs (real redaction, not an overlay) and re-inserts the new text using the original font if it covers all the needed characters, or the same family from Glyph's bundled catalog of ~240 free fonts otherwise (Roboto, Montserrat, Lato, Merriweather…), or a metric-compatible free clone for proprietary fonts (Calibri → Carlito, Arial → Liberation Sans, Arial Narrow → Nimbus Sans Narrow…), with metric compensation (you'll see a warning banner when the result isn't the original typeface). If the line mixes styles (a bold word inside an otherwise plain sentence, say), Glyph diffs your edit against the original and keeps that word's exact original formatting wherever the surrounding edit left it untouched, instead of collapsing the whole line to one font (see `docs/DECISIONS.md`).
 5. Add a signature: draw one on a canvas, or import a file (PDF, PNG, or JPEG), then drag/resize it into place. A PDF signature is embedded as vector (crisp at any zoom); an image is stamped as-is.
 6. Undo/redo walk through the document's version history (kept server-side).
 7. Download the result whenever you like.
@@ -22,6 +22,7 @@ Backend (Python / FastAPI / PyMuPDF):
 cd backend
 python3 -m venv .venv        # once
 .venv/bin/pip install -r requirements.txt   # once
+.venv/bin/python scripts/fetch_fonts.py     # once: downloads the bundled font catalog (~95 MB)
 .venv/bin/uvicorn app.main:app --port 8000 --reload
 ```
 
@@ -45,6 +46,11 @@ Both sides read a few optional environment variables — useful once you deploy 
 | `MAX_UPLOAD_MB` | backend | `20` | Upload size cap. |
 | `MAX_SIGNATURE_MB` | backend | `5` | Signature file size cap (drawn signatures are small PNGs and rarely get close to this). |
 | `SANDBOX_MAX_MEMORY_MB` / `SANDBOX_MAX_CPU_SECONDS` / `SANDBOX_TIMEOUT_SECONDS` | backend | `512` / `8` / `15` | Limits applied to the isolated subprocess that parses each PDF (see below). |
+| `SANDBOX_MAX_CONCURRENCY` / `SANDBOX_QUEUE_TIMEOUT_SECONDS` | backend | `2` / `20` | How many of those subprocesses may run at once, and how long a request waits for a free one before getting a `503`. Size it so `SANDBOX_MAX_CONCURRENCY × SANDBOX_MAX_MEMORY_MB` + `STORE_MAX_MB` fits in the instance's RAM. |
+| `SANDBOX_MAX_RESULT_MB` | backend | `64` | Largest result (re-saved PDF) a subprocess may send back. |
+| `DOCUMENT_TTL_MINUTES` | backend | `30` | An open document nobody touched for this long is deleted. |
+| `DOCUMENT_MAX_MB` | backend | `60` | Per-document cap on its undo history; the oldest undo states are dropped first. |
+| `STORE_MAX_MB` / `MAX_DOCUMENTS` | backend | `200` / `200` | Caps on everything held in memory; past them, new uploads/edits get a `503` instead of evicting someone else's document. |
 | `NEXT_PUBLIC_SITE_URL` | frontend | placeholder | Canonical URL used for SEO metadata once you have a real domain. |
 
 ## Deployment
@@ -75,26 +81,36 @@ app/            # Next.js routes (home page, /editor, sitemap, robots, OG image)
 components/     # PdfPage (render + edit), EditorApp (editor screen), BrandMark
 lib/            # API client, shared types, pdf.js setup
 backend/        # FastAPI + PyMuPDF (the actual editing engine)
+  app/fonts/    # bundled free fonts (only Liberation + Open Sans are committed)
+  scripts/      # fetch_fonts.py: downloads the rest of the font catalog
 ```
 
 ## Documentation
 
+- [`docs/HANDOFF.md`](./docs/HANDOFF.md) — start here to pick the project up or fork it: setup, architecture, engine rules, fonts, security, deployment, known pitfalls (in French).
 - [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — how the frontend and backend fit together.
 - [`docs/API.md`](./docs/API.md) — backend route reference.
-- [`docs/DECISIONS.md`](./docs/DECISIONS.md) — the real bugs behind the editing engine's design choices, and why each workaround exists. Good starting point before touching `pdf_engine.py`.
+- [`docs/DECISIONS.md`](./docs/DECISIONS.md) — the real bugs behind the editing engine's design choices, and why each workaround exists. Good starting point before touching `backend/app/pdf_engine/`.
 
 ## Known limitations
 
 - **Upload and edit size**: PDFs over 20 MB are rejected, a single edit is capped at 5000 characters, and a signature file over 5 MB is rejected (all configurable, see above).
 - **Signature placement doesn't preserve aspect ratio automatically**: the placement box is freely resizable in both dimensions, so a signature can be stretched out of proportion if you drag unevenly — nothing currently locks the ratio while resizing.
-- **PDF parsing is sandboxed**: every operation touching an uploaded PDF runs in a short-lived, resource-limited subprocess (see [`docs/DECISIONS.md`](./docs/DECISIONS.md#isoler-le-parsing-pdf-dans-un-sous-processus)), since a malformed PDF can crash the underlying C library. This adds a small per-request overhead but keeps one bad file from taking down the whole backend.
-- **Reusing the original font** only works if it exposes a usable Unicode cmap. Most PDFs produced by Word or a virtual printer embed subsetted Identity-H fonts without one — in that (very common) case, Glyph falls back to a system font with the same name (e.g. Arial Narrow), or a generic system font otherwise, with metric compensation to preserve the original visual width. A **Type3-sourced font** (glyphs drawn as arbitrary vector programs, common in some report generators) carries no weight metadata at all — in that case Glyph renders the original glyphs and measures how much of the original's ink survives compared to a bundled Open Sans variable font, interpolating a matching weight on the fly (not just snapping to Light/Regular/Bold, see `docs/DECISIONS.md`) rather than guessing.
+- **PDF parsing is sandboxed**: every operation touching an uploaded PDF runs in a short-lived, resource-limited subprocess (see [`docs/DECISIONS.md`](./docs/DECISIONS.md#isoler-le-parsing-pdf-dans-un-sous-processus)), since a malformed PDF can crash the underlying C library. At most `SANDBOX_MAX_CONCURRENCY` of them run at once, and nothing they send back is unpickled (raw bytes + JSON only). This adds a small per-request overhead but keeps one bad file from taking down the whole backend. The sandbox is a resource boundary, not a security boundary in the OS sense: the subprocess runs as the same user with the same filesystem/network access.
+- **Server capacity is bounded**: open documents expire after 30 minutes of inactivity, and total memory use is capped (see Configuration). On a full server, uploads get a `503` and should be retried later.
+- **Reusing the original font** only works if it exposes a usable Unicode cmap. Most PDFs produced by Word or a virtual printer embed subsetted Identity-H fonts without one. In that (very common) case Glyph falls back, in order, to:
+  1. the real proprietary font, if the backend happens to run on macOS (Arial, Arial Narrow, Times New Roman, Courier New, Georgia, Verdana, Tahoma);
+  2. the same family from the bundled catalog (`backend/app/pdf_engine/font_catalog.py`): ~240 free families, either the original typeface itself (Google Fonts families, Latin Modern for LaTeX documents, DejaVu) or a metric-compatible clone of a proprietary one: Liberation Sans/Serif/Mono (Arial, Times New Roman, Courier New), Carlito (Calibri), Caladea (Cambria), Gelasio (Georgia), Nimbus Sans / Nimbus Sans Narrow (Helvetica, Arial Narrow), P052 (Palatino / Book Antiqua), C059 (Century Schoolbook), URW Gothic (Century Gothic / Avant Garde), URW Bookman, Selawik (Segoe UI), DejaVu Sans (Verdana);
+  3. a generic family for the font's category (sans-serif, serif, monospace);
+  4. DejaVu, for characters none of the above cover (Greek, Cyrillic, symbols…).
+
+  Metric compensation preserves the original visual width whenever the result isn't the original font. A **Type3-sourced font** (glyphs drawn as arbitrary vector programs, common in some report generators) carries no weight metadata at all. In that case Glyph uses a bundled Open Sans variable font at an empirically chosen weight (see `docs/DECISIONS.md`) rather than guessing.
+- **Font catalog size**: the full catalog is ~95 MB. Only Liberation and Open Sans are committed (the guaranteed floor, so the backend never ends up with no font file at all); the rest is downloaded by `backend/scripts/fetch_fonts.py`, which the Docker build runs automatically, from the exact URLs and SHA-256 hashes pinned in `backend/scripts/fonts.lock.json` (a file whose hash doesn't match fails the build). A family that isn't on disk is skipped and the next closest one is used. Fonts outside the catalog, and weights other than regular/bold (Light, Medium, SemiBold…), map to the closest bundled family/style.
 - **Editing is per line, deliberately**: a field spanning several visual lines (an address, a multi-line note) is edited one line at a time rather than as a single reflow-capable block. Earlier versions tried to auto-detect "this is one wrapped paragraph" from shared edges/alignment, but real documents kept surfacing independent lines that looked just like a wrapped paragraph by coincidence (a title stacked on a subtitle, a right-aligned column of unrelated values) — merging them let editing one line corrupt another. Per-line editing has no such failure mode. See `docs/DECISIONS.md`.
 - **Block overflow**: if you type a manual line break into a field, growing it to more lines than it originally had, it grows downward — but only up to the nearest sibling below, never past it; a field one line tall never grows at all (its font size is reduced instead if the new text is too wide). Editing a block is also clamped against its immediate neighbors on all four sides, so it can never bleed into a sibling's territory even when their bounding boxes already overlap slightly in the source PDF (common with tight line leading or tightly-packed table columns — see `docs/DECISIONS.md`).
 - **Colored backgrounds**: redaction clears everything in the edited area, including any vector fill behind the text. Not an issue for typical text blocks (names, dates, paragraphs), but worth knowing if you're editing colored table cells.
 - **Password-protected PDFs** are rejected at upload with a clear error — not supported.
 - No advanced text shaping (HarfBuzz), no RTL/CJK support, no page rotation — out of scope for now. Signatures, form fields, shapes, and OCR aren't implemented yet.
-- The system-font fallback currently only looks in macOS's font directory; running the backend on Linux/Windows will skip that fallback tier (see `docs/DECISIONS.md`).
 - `backend/tests/` covers the block-detection and redaction-safety invariants (`python -m unittest discover -s tests -v`); `backend/smoke_test.py` remains a manual, ad hoc script on top of that, not part of CI.
 
 ## Contributing
