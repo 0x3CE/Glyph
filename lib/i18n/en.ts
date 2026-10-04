@@ -4,12 +4,13 @@ export const en: Dictionary = {
   meta: {
     title: "Glyph — the PDF editor that actually edits the text",
     description:
-      "Edit the text of a PDF for real: the original content is removed and rewritten, not covered with a white box. Original font, search and copy-paste stay intact.",
+      "Edit the text of a PDF for real: the old text is removed, not hidden under a white box. Original font, search and copy-paste stay intact.",
     siteDescription:
-      "Glyph rewrites a PDF's content instead of covering it up: the original text is removed and the new text is inserted with the original font. Search and copy-paste keep working.",
+      "Glyph rewrites a PDF's content instead of covering it up: the old text is removed, the new text inserted with the original font.",
     keywords: ["PDF editor", "edit PDF text", "edit PDF online", "PDF editor without overlay", "rewrite PDF text"],
     ogDescription: "The original text is removed from the PDF, not covered up. Real editing, not an overlay.",
     ogLocale: "en_US",
+    ogImageAlt: "Glyph: edit the text in a PDF, for real.",
     organizationDescription: "A PDF editor that rewrites the document's content instead of covering it up.",
     softwareDescription:
       "A PDF editor that rewrites the document's content (the original text is truly removed, then reinserted with the original font) instead of covering it with an overlay.",

@@ -99,6 +99,7 @@ Le processus API ne lit jamais un PDF lui-même : il transmet les octets à un s
 | `components/PdfPage.tsx` | Rendu pdf.js, zones cliquables, zone de saisie |
 | `components/SignatureModal.tsx`, `SignaturePlacer.tsx` | Capture puis placement de la signature |
 | `lib/api-client.ts` | Tous les appels au backend, typés |
+| `lib/brand.ts` | Le logo : un « G » en Rozha One (OFL) converti en tracés, source unique de l'en-tête, de l'icône iPhone et de l'image de partage ; `app/icon.svg` en reprend le tracé |
 | `backend/app/main.py` | Routes FastAPI, lecture des corps bruts, validation des résultats de la sandbox |
 | `backend/app/isolation.py` | Sandbox : un sous-processus par opération, limites, protocole sans pickle |
 | `backend/app/documents.py` | Store en mémoire, historique, expiration et plafonds |
@@ -239,7 +240,7 @@ Le chemin testé : backend sur Render (Docker, via `render.yaml`), frontend sur 
 | Variable | Côté | Défaut | Rôle |
 | --- | --- | --- | --- |
 | `BACKEND_URL` | frontend | `http://localhost:8000` | Cible du relais `/api/*` |
-| `NEXT_PUBLIC_SITE_URL` | frontend | — | URL canonique pour le SEO |
+| `NEXT_PUBLIC_SITE_URL` | frontend | domaine de production Vercel | Origine publique des URL canoniques, `hreflang`, images de partage, sitemap et robots (`lib/site.ts`). À définir avec le nom de domaine |
 | `ALLOWED_ORIGINS` | backend | `http://localhost:3000` | Origines CORS autorisées |
 | `MAX_UPLOAD_MB` / `MAX_SIGNATURE_MB` | backend | 20 / 5 | Taille max des fichiers |
 | `SANDBOX_MAX_MEMORY_MB` / `SANDBOX_MAX_CPU_SECONDS` / `SANDBOX_TIMEOUT_SECONDS` | backend | 512 / 8 / 15 | Limites d'un sous-processus |

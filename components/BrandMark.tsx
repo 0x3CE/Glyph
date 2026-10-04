@@ -1,21 +1,11 @@
+import { BRAND_G_PATH, BRAND_G_VIEWBOX } from "@/lib/brand";
+
+// The brand "G" (see lib/brand.ts). Drawn in `currentColor`, so it follows
+// the surrounding text color (`.brand-mark` sets the ink color).
 export function BrandMark({ size = 20 }: { size?: number }) {
   return (
-    <svg viewBox="0 0 48 48" width={size} height={size} aria-hidden="true">
-      <path
-        d="M24 10a14 14 0 1 0 12.12 21"
-        stroke="#171717"
-        strokeWidth="4.5"
-        fill="none"
-        strokeLinecap="round"
-      />
-      <path
-        d="M24 24h11v4a11 11 0 0 1-6 3.5"
-        stroke="#3d2fe0"
-        strokeWidth="4.5"
-        fill="none"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+    <svg viewBox={BRAND_G_VIEWBOX} width={size} height={size} aria-hidden="true">
+      <path d={BRAND_G_PATH} fill="currentColor" />
     </svg>
   );
 }

@@ -52,7 +52,8 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   // Pages only: not the backend proxy (/api), Next's own assets, files with
-  // an extension (icon.svg, robots.txt, sitemap.xml), or the generated
-  // Open Graph images, which already carry their locale in the path.
-  matcher: ["/((?!api/|_next/|.*\\..*|.*opengraph-image).*)"],
+  // an extension (icon.svg, robots.txt, sitemap.xml), or generated images
+  // with no extension -- the Open Graph images (which already carry their
+  // locale in the path) and the apple-touch-icon.
+  matcher: ["/((?!api/|_next/|.*\\..*|.*opengraph-image|apple-icon).*)"],
 };

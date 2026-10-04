@@ -1,8 +1,17 @@
 import { ImageResponse } from "next/og";
+import { BRAND_G_PATH, BRAND_G_VIEWBOX, BRAND_INK } from "@/lib/brand";
 import { DEFAULT_LOCALE, getDictionary, hasLocale } from "@/lib/i18n";
 
-export const size = { width: 1200, height: 630 };
-export const contentType = "image/png";
+const size = { width: 1200, height: 630 };
+const contentType = "image/png";
+
+// One image per locale, with its alt text (og:image:alt) in that language --
+// a plain `export const alt` would be the same string for both.
+export async function generateImageMetadata({ params }: { params: { lang: string } }) {
+  const { lang } = await params;
+  const locale = hasLocale(lang) ? lang : DEFAULT_LOCALE;
+  return [{ id: "og", alt: getDictionary(locale).meta.ogImageAlt, size, contentType }];
+}
 
 export default async function OpengraphImage({ params }: { params: Promise<{ lang: string }> }) {
   const { lang } = await params;
@@ -22,22 +31,8 @@ export default async function OpengraphImage({ params }: { params: Promise<{ lan
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 40 }}>
-          <svg viewBox="0 0 48 48" width="52" height="52">
-            <path
-              d="M24 10a14 14 0 1 0 12.12 21"
-              stroke="#171717"
-              strokeWidth="4.5"
-              fill="none"
-              strokeLinecap="round"
-            />
-            <path
-              d="M24 24h11v4a11 11 0 0 1-6 3.5"
-              stroke="#3d2fe0"
-              strokeWidth="4.5"
-              fill="none"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
+          <svg viewBox={BRAND_G_VIEWBOX} width="52" height="52">
+            <path d={BRAND_G_PATH} fill={BRAND_INK} />
           </svg>
           <span style={{ fontSize: 34, fontWeight: 600, color: "#171717" }}>Glyph</span>
         </div>

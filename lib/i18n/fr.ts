@@ -6,12 +6,13 @@ export const fr = {
   meta: {
     title: "Glyph — l'éditeur PDF qui modifie vraiment le texte",
     description:
-      "Modifie le texte d'un PDF pour de vrai : le contenu d'origine est supprimé et réécrit, pas recouvert par un rectangle. Police d'origine, recherche et copier-coller intacts.",
+      "Modifie le texte d'un PDF pour de vrai : l'ancien texte est supprimé, pas caché sous un rectangle. Police d'origine, recherche et copier-coller intacts.",
     siteDescription:
-      "Glyph réécrit le contenu d'un PDF au lieu de le recouvrir : le texte d'origine est supprimé, le nouveau réinséré avec la police d'origine. Recherche et copier-coller intacts.",
+      "Glyph réécrit le contenu d'un PDF au lieu de le recouvrir : l'ancien texte est supprimé, le nouveau réinséré avec la police d'origine.",
     keywords: ["éditeur PDF", "modifier texte PDF", "éditer PDF en ligne", "PDF sans overlay", "réécrire PDF"],
     ogDescription: "Le texte d'origine est supprimé du PDF, pas recouvert. Édition réelle, pas un calque.",
     ogLocale: "fr_FR",
+    ogImageAlt: "Glyph : modifie le texte d'un PDF, pour de vrai.",
     organizationDescription: "Éditeur PDF qui réécrit le contenu du document au lieu de le recouvrir.",
     softwareDescription:
       "Éditeur PDF qui réécrit le contenu du document (suppression réelle du texte d'origine, réinsertion avec la police d'origine) au lieu de le recouvrir d'un calque.",

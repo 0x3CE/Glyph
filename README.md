@@ -53,7 +53,7 @@ Both sides read a few optional environment variables — useful once you deploy 
 | `DOCUMENT_TTL_MINUTES` | backend | `30` | An open document nobody touched for this long is deleted. |
 | `DOCUMENT_MAX_MB` | backend | `60` | Per-document cap on its undo history; the oldest undo states are dropped first. |
 | `STORE_MAX_MB` / `MAX_DOCUMENTS` | backend | `200` / `200` | Caps on everything held in memory; past them, new uploads/edits get a `503` instead of evicting someone else's document. |
-| `NEXT_PUBLIC_SITE_URL` | frontend | placeholder | Canonical URL used for SEO metadata once you have a real domain. |
+| `NEXT_PUBLIC_SITE_URL` | frontend | Vercel production URL | Public origin used for canonical URLs, hreflang, Open Graph images, sitemap and robots.txt (`lib/site.ts`). Set it once a custom domain is attached; without it, Vercel's production domain (`VERCEL_PROJECT_PRODUCTION_URL`) is used, and `http://localhost:3000` outside Vercel. |
 
 ## Deployment
 
@@ -69,7 +69,7 @@ Frontend and backend deploy as two separate services — there's no requirement 
 
 1. New Project → import this repo (Vercel auto-detects Next.js, no build settings to change).
 2. Set the `BACKEND_URL` environment variable to the Render URL from above.
-3. Optionally set `NEXT_PUBLIC_SITE_URL` to your Vercel/custom domain once you have one, for correct SEO metadata.
+3. Once a custom domain is attached, set `NEXT_PUBLIC_SITE_URL` to it (e.g. `https://glyph-pdf.com`) so canonical URLs, the sitemap and share previews use it; until then, Vercel's production domain is used automatically.
 4. Redeploy after setting env vars (Vercel doesn't hot-reload them into a running build).
 
 Then go back to Render and set `ALLOWED_ORIGINS` to the Vercel URL from step 2, so the backend's CORS allowlist matches — the two services reference each other's URLs, so the first deploy of each will need one follow-up env var update once the other's URL is known.

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { LOCALES, getDictionary, hasLocale } from "@/lib/i18n";
 import { localeOpenGraph } from "@/lib/i18n/metadata";
+import { SITE_URL } from "@/lib/site";
 import "../globals.css";
 
 const inter = Inter({
@@ -18,8 +19,6 @@ const jetbrainsMono = JetBrains_Mono({
   weight: ["400", "500"],
 });
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://glyph.app";
-
 type Props = { children: React.ReactNode; params: Promise<{ lang: string }> };
 
 // Every page is prerendered once per locale; proxy.ts routes visitors to the
@@ -33,7 +32,7 @@ export async function generateMetadata({ params }: Omit<Props, "children">): Pro
   if (!hasLocale(lang)) return {};
   const t = getDictionary(lang).meta;
   return {
-    metadataBase: new URL(siteUrl),
+    metadataBase: new URL(SITE_URL),
     title: { default: t.title, template: "%s · Glyph" },
     description: t.siteDescription,
     keywords: t.keywords,
@@ -53,7 +52,7 @@ export default async function RootLayout({ children, params }: Props) {
     "@context": "https://schema.org",
     "@type": "Organization",
     name: "Glyph",
-    url: siteUrl,
+    url: SITE_URL,
     description: getDictionary(lang).meta.organizationDescription,
   };
 
