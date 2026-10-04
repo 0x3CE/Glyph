@@ -7,11 +7,15 @@ import { PdfPage } from "@/components/PdfPage";
 import type { PendingSignature } from "@/components/PdfPage";
 import { SignatureModal } from "@/components/SignatureModal";
 import { BrandMark } from "@/components/BrandMark";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { localePath } from "@/lib/i18n";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import { deleteDocument, documentDownloadUrl, redo, undo, uploadDocument } from "@/lib/api-client";
 
 const SCALE = 1.5;
 
 export function EditorApp() {
+  const { locale, t } = useI18n();
   const [fileName, setFileName] = useState<string | null>(null);
   const [documentId, setDocumentId] = useState<string | null>(null);
   const [pageCount, setPageCount] = useState(0);
@@ -58,11 +62,11 @@ export function EditorApp() {
       setFileName(file.name);
     } catch (e) {
       console.error(e);
-      setError("Impossible de charger ce PDF. Le fichier est peut-être corrompu ou protégé.");
+      setError(t.editor.loadError);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const handleEdited = (fontSubstituted: boolean) => {
     setEditCount((n) => n + 1);
@@ -114,7 +118,7 @@ export function EditorApp() {
   return (
     <div className="editor-shell">
       <header className="topbar">
-        <Link href="/" className="brand">
+        <Link href={localePath(locale, "/")} className="brand">
           <span className="brand-mark">
             <BrandMark />
           </span>
@@ -122,8 +126,20 @@ export function EditorApp() {
         </Link>
 
         <div className="topbar-actions">
+          {/* Only before a document is open: switching reloads the page,
+              which would drop the document being edited. */}
+          {!documentId && (
+            <LanguageSwitcher
+              locale={locale}
+              path="/editor"
+              label={t.switcher.label}
+              shortLabel={t.switcher.shortLabel}
+              ariaLabel={t.switcher.ariaLabel}
+              className="btn btn-ghost lang-switch"
+            />
+          )}
           <label className="btn btn-ghost">
-            {fileName ? "Changer de fichier" : "Ouvrir un PDF"}
+            {fileName ? t.editor.changeFile : t.editor.openPdf}
             <input
               type="file"
               accept="application/pdf"
@@ -136,10 +152,10 @@ export function EditorApp() {
           </label>
           {documentId && (
             <>
-              <button className="btn btn-icon" onClick={handleUndo} disabled={!canUndo} title="Annuler">
+              <button className="btn btn-icon" onClick={handleUndo} disabled={!canUndo} title={t.editor.undo}>
                 ↶
               </button>
-              <button className="btn btn-icon" onClick={handleRedo} disabled={!canRedo} title="Rétablir">
+              <button className="btn btn-icon" onClick={handleRedo} disabled={!canRedo} title={t.editor.redo}>
                 ↷
               </button>
               <button
@@ -147,14 +163,15 @@ export function EditorApp() {
                 onClick={() => setShowSignatureModal(true)}
                 disabled={!!pendingSignature}
               >
-                Signature
+                {t.editor.signature}
               </button>
               <a
                 className="btn btn-accent"
                 href={documentDownloadUrl(documentId)}
-                download={fileName ? `modifie-${fileName}` : "document-modifie.pdf"}
+                download={fileName ? t.editor.downloadName(fileName) : t.editor.defaultDownloadName}
               >
-                Télécharger{editCount ? <span className="btn-badge">{editCount}</span> : null}
+                {t.editor.download}
+                {editCount ? <span className="btn-badge">{editCount}</span> : null}
               </a>
             </>
           )}
@@ -169,7 +186,7 @@ export function EditorApp() {
         )}
         {substitutionNotice && (
           <div className="toast toast-notice" onClick={() => setSubstitutionNotice(false)}>
-            Police d&apos;origine indisponible pour ce texte — une police de remplacement a été utilisée.
+            {t.editor.substitutionNotice}
           </div>
         )}
       </div>
@@ -189,10 +206,10 @@ export function EditorApp() {
                   />
                 </svg>
               </div>
-              <p className="dropzone-title">Glisse un PDF ici</p>
-              <p className="dropzone-sub">ou</p>
+              <p className="dropzone-title">{t.editor.dropTitle}</p>
+              <p className="dropzone-sub">{t.editor.dropOr}</p>
               <label className="btn btn-accent">
-                Choisir un fichier
+                {t.editor.chooseFile}
                 <input
                   type="file"
                   accept="application/pdf"
@@ -204,9 +221,7 @@ export function EditorApp() {
                 />
               </label>
             </div>
-            <p className="empty-hint">
-              Rien n&apos;est stocké : le fichier est traité en mémoire le temps de la session.
-            </p>
+            <p className="empty-hint">{t.editor.emptyHint}</p>
           </div>
         )}
 
@@ -223,7 +238,7 @@ export function EditorApp() {
                 className="btn btn-icon"
                 disabled={pageNumber <= 1}
                 onClick={() => setPageNumber((n) => n - 1)}
-                title="Page précédente"
+                title={t.editor.previousPage}
               >
                 ←
               </button>
@@ -234,7 +249,7 @@ export function EditorApp() {
                 className="btn btn-icon"
                 disabled={pageNumber >= pageCount}
                 onClick={() => setPageNumber((n) => n + 1)}
-                title="Page suivante"
+                title={t.editor.nextPage}
               >
                 →
               </button>
@@ -257,7 +272,7 @@ export function EditorApp() {
 
         {isDragging && documentId && (
           <div className="drop-overlay">
-            <p>Déposer pour remplacer le document</p>
+            <p>{t.editor.dropToReplace}</p>
           </div>
         )}
       </main>

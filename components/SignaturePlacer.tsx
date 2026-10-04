@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
 interface SignaturePlacerProps {
   blob: Blob;
@@ -42,6 +43,7 @@ export function SignaturePlacer({
   onConfirm,
   onCancel,
 }: SignaturePlacerProps) {
+  const { t } = useI18n();
   const pageBoxWidth = pageWidth * scale;
   const pageBoxHeight = pageHeight * scale;
 
@@ -114,17 +116,17 @@ export function SignaturePlacer({
     >
       {previewUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={previewUrl} alt="Signature" className="signature-preview" draggable={false} />
+        <img src={previewUrl} alt={t.editor.signatureAlt} className="signature-preview" draggable={false} />
       ) : (
         <div className="signature-preview signature-preview-file">PDF</div>
       )}
       <div className="signature-placer-handle" onPointerDown={beginDrag("resize")} />
       <div className="signature-placer-controls" onPointerDown={(e) => e.stopPropagation()}>
         <button className="btn btn-accent" onClick={confirm} disabled={saving}>
-          {saving ? "Enregistrement…" : "Valider"}
+          {saving ? t.editor.saving : t.editor.confirm}
         </button>
         <button className="btn btn-ghost" onClick={onCancel} disabled={saving}>
-          Annuler
+          {t.editor.cancel}
         </button>
       </div>
     </div>

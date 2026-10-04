@@ -8,6 +8,7 @@ import { addSignature, editBlock, fetchDocumentBytes, getPageStructure } from ".
 import type { Block } from "../lib/types";
 import { FLAG_BOLD, FLAG_ITALIC, fontFamilyForFlags } from "../lib/types";
 import { SignaturePlacer } from "./SignaturePlacer";
+import { useI18n } from "../lib/i18n/I18nProvider";
 
 export interface PendingSignature {
   blob: Blob;
@@ -42,6 +43,7 @@ export function PdfPage({
   onSignaturePlaced,
   onCancelSignature,
 }: PdfPageProps) {
+  const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [blocks, setBlocks] = useState<Block[]>([]);
@@ -219,10 +221,10 @@ export function PdfPage({
               />
               <div className="block-editor-controls">
                 <button className="btn btn-accent" onClick={commitEdit} disabled={editing.saving}>
-                  {editing.saving ? "Enregistrement…" : "Enregistrer"}
+                  {editing.saving ? t.editor.saving : t.editor.save}
                 </button>
                 <button className="btn btn-ghost" onClick={cancelEdit} disabled={editing.saving}>
-                  Annuler
+                  {t.editor.cancel}
                 </button>
               </div>
             </div>

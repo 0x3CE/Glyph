@@ -21,7 +21,8 @@ Pas de compte, pas de base de données, pas de stockage : chaque document vit en
 - préservation du formatage mixte : un mot en gras au milieu d'une phrase garde son gras si l'édition ne le touche pas ;
 - signature dessinée ou importée (PDF en vectoriel, PNG ou JPEG), placée et redimensionnée à la main ;
 - annuler / rétablir (historique côté serveur) et téléchargement du résultat ;
-- landing page en français, avec FAQ, données structurées SEO et lien Buy Me a Coffee.
+- site en français et en anglais : langue choisie selon le pays à la première visite, bouton FR/EN mémorisé ;
+- landing page avec FAQ, données structurées SEO et lien Buy Me a Coffee.
 
 ## Démarrage rapide
 
@@ -44,7 +45,7 @@ npm install
 npm run dev
 ```
 
-L'éditeur est sur <http://localhost:3000/editor>, la landing page sur <http://localhost:3000>.
+L'éditeur est sur <http://localhost:3000/editor>, la landing page sur <http://localhost:3000> (version anglaise : `/en` et `/en/editor`).
 
 **Tests :**
 
@@ -91,8 +92,10 @@ Le processus API ne lit jamais un PDF lui-même : il transmet les octets à un s
 
 | Fichier | Rôle |
 | --- | --- |
-| `app/page.tsx` | Landing page statique (SEO, FAQ, Buy Me a Coffee) |
-| `app/editor/page.tsx` + `components/EditorApp.tsx` | Écran d'édition : upload, pages, undo/redo, signature, téléchargement |
+| `proxy.ts` | Choix de la langue : préfixe `/en`, pays à la première visite, cookie |
+| `lib/i18n/` | Dictionnaires `fr.ts` / `en.ts`, configuration des langues, balises `hreflang` |
+| `app/[lang]/page.tsx` | Landing page, générée en français et en anglais (SEO, FAQ, Buy Me a Coffee) |
+| `app/[lang]/editor/page.tsx` + `components/EditorApp.tsx` | Écran d'édition : upload, pages, undo/redo, signature, téléchargement |
 | `components/PdfPage.tsx` | Rendu pdf.js, zones cliquables, zone de saisie |
 | `components/SignatureModal.tsx`, `SignaturePlacer.tsx` | Capture puis placement de la signature |
 | `lib/api-client.ts` | Tous les appels au backend, typés |
@@ -102,6 +105,23 @@ Le processus API ne lit jamais un PDF lui-même : il transmet les octets à un s
 | `backend/app/pdf_engine/` | Le moteur d'édition (section suivante) |
 | `backend/app/fonts/` + `backend/scripts/` | Polices embarquées, script de téléchargement et verrou d'empreintes |
 | `backend/tests/` | Tests du moteur et des protections |
+
+## Langues
+
+Le site existe en français et en anglais, avec des URL distinctes pour que les deux versions soient référencées : le français sur `/` et `/editor`, l'anglais sur `/en` et `/en/editor`. En interne, toutes les pages vivent sous `app/[lang]` ; `proxy.ts` (le nouveau nom du middleware depuis Next 16) réécrit les URL françaises vers `/fr/...`.
+
+**Choix de la langue, pour une URL sans préfixe :**
+
+1. le cookie `glyph-lang`, posé par le bouton FR/EN, gagne toujours ;
+2. un robot d'indexation n'est jamais redirigé : il voit la version demandée ;
+3. sinon, le pays donné par Vercel (`x-vercel-ip-country`) : français pour la France, ses outre-mer (chacun a son propre code pays : `GP`, `MQ`, `RE`, `NC`…) et Monaco, anglais partout ailleurs, par une redirection temporaire (307) vers `/en` ;
+4. sans en-tête pays (en local, ou hébergé ailleurs que sur Vercel) : français.
+
+Une URL `/en/...` explicite est toujours servie telle quelle, et `/fr/...` redirige (308) vers la même page sans préfixe, pour éviter le contenu dupliqué. Pour tester en local : `curl -H 'x-vercel-ip-country: US' localhost:3000/`.
+
+**Textes** : tout est dans `lib/i18n/fr.ts` et `lib/i18n/en.ts`. Le type du dictionnaire français sert de modèle : une clé manquante dans la version anglaise fait échouer le typecheck. Les composants serveur appellent `getDictionary(lang)`, les composants client de l'éditeur `useI18n()`. Seule la langue traverse la frontière serveur → client, ce qui permet aux dictionnaires de contenir des fonctions (`downloadName`).
+
+**Référencement** : chaque page déclare son URL canonique et ses équivalents (`hreflang`, avec `x-default` vers l'anglais), le sitemap liste les deux versions, et l'image de partage existe dans les deux langues.
 
 ## Moteur d'édition PDF
 
@@ -283,6 +303,7 @@ Les six points de priorité basse de l'audit de sécurité d'octobre 2026 resten
 - pas de mise en forme avancée du texte (HarfBuzz), ni d'écriture de droite à gauche ou CJK, ni de rotation de page ;
 - chaque édition embarque sa propre copie de police dans le PDF (voir « Un nom de ressource police unique par édition » dans `DECISIONS.md`) ;
 - tout PDF protégé par mot de passe est refusé à l'upload.
+- la langue n'est devinée d'après le pays que sur Vercel ; ailleurs, tout le monde reçoit le français jusqu'au clic sur FR/EN.
 
 ## Pièges et conventions pour reprendre ou forker
 
@@ -297,11 +318,14 @@ Avant de toucher au moteur, lire [`DECISIONS.md`](./DECISIONS.md). Presque chaqu
 - **Le StrictMode de React** exécute les nettoyages d'effet dès le montage en dev : ne jamais y supprimer le document côté serveur.
 - **Tester sur un Mac masque des bugs Linux** : les vraies polices système macOS passent avant le catalogue. Un bug n'apparaissait qu'avec le Verdana système ; les tests simulent donc l'absence de polices système.
 - **Patcher le bon module** dans les tests : `pdf_engine.fonts.X`, pas `pdf_engine.X`.
+- **Les `openGraph` d'une page remplacent ceux du layout** au lieu de s'y ajouter : passer par `localeOpenGraph()`, sinon `og:locale` et `og:site_name` disparaissent.
+- **Après avoir déplacé des routes**, les types générés dans `.next/` sont périmés et le typecheck échoue sur des fichiers qui n'existent plus : lancer `npx next typegen`.
+- **Un nouveau texte affiché** va dans les deux dictionnaires, jamais en dur dans un composant.
 
 **Conventions :**
 
 - toute opération sur des octets PDF non produits par le backend passe par `run_isolated`, et son worker renvoie `(JSON, octets ou None)` ;
 - tout ce qui sort de la sandbox est validé avec un modèle Pydantic avant usage (`_validated` dans `main.py`) ;
 - chaque correction du moteur ajoute un test de non-régression et une section dans `DECISIONS.md` (le problème, ce qu'on fait, la limite acceptée) ;
-- README en anglais, documentation technique et interface en français ;
+- README en anglais, documentation technique en français, interface dans les deux langues ;
 - les polices s'ajoutent par le catalogue et `fetch_fonts.py --refresh`, jamais en déposant un fichier à la main.

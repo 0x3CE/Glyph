@@ -920,3 +920,49 @@ a {
     align-items: flex-start;
   }
 }
+
+/* ---------- Language switcher + 404 ---------- */
+
+.lang-switch {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.lang-short {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .lang-long {
+    display: none;
+  }
+  .lang-short {
+    display: inline;
+  }
+}
+
+.footer-links a[hreflang] {
+  text-underline-offset: 3px;
+}
+
+.not-found {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px 16px;
+  text-align: center;
+}
+
+.not-found h1 {
+  margin: 8px 0 0;
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.not-found p {
+  margin: 0 0 12px;
+  color: var(--ink-dim);
+}

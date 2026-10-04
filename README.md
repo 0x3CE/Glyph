@@ -14,6 +14,8 @@ It's a small, focused, open-source tool: no accounts, no cloud storage, no track
 6. Undo/redo walk through the document's version history (kept server-side).
 7. Download the result whenever you like.
 
+The site (landing page and editor) is in **French and English**. French lives at `/` and `/editor`, English at `/en` and `/en/editor`. On a first visit, `proxy.ts` picks the language from the visitor's country (French for France, its overseas territories and Monaco; English everywhere else), using the `x-vercel-ip-country` header Vercel adds — no IP is read or stored. A FR/EN switch in the header overrides that guess and is remembered in a `glyph-lang` cookie. Search engine crawlers are never redirected, so both versions stay indexed (with `hreflang` links between them).
+
 ## Getting started
 
 Backend (Python / FastAPI / PyMuPDF):
@@ -77,9 +79,12 @@ The backend has no database and keeps everything in the web service's own memory
 ## Project structure
 
 ```text
-app/            # Next.js routes (home page, /editor, sitemap, robots, OG image)
-components/     # PdfPage (render + edit), EditorApp (editor screen), BrandMark
+app/[lang]/     # Next.js routes per language (home page, /editor, OG image, 404)
+app/            # sitemap, robots, icon, global styles
+proxy.ts        # language routing: /en prefix, country-based first visit, cookie
+components/     # PdfPage (render + edit), EditorApp (editor screen), LanguageSwitcher, BrandMark
 lib/            # API client, shared types, pdf.js setup
+lib/i18n/       # fr.ts / en.ts dictionaries, locale config, hreflang helpers
 backend/        # FastAPI + PyMuPDF (the actual editing engine)
   app/fonts/    # bundled free fonts (only Liberation + Open Sans are committed)
   scripts/      # fetch_fonts.py: downloads the rest of the font catalog
@@ -97,6 +102,7 @@ backend/        # FastAPI + PyMuPDF (the actual editing engine)
 - **Upload and edit size**: PDFs over 20 MB are rejected, a single edit is capped at 5000 characters, and a signature file over 5 MB is rejected (all configurable, see above).
 - **Signature placement doesn't preserve aspect ratio automatically**: the placement box is freely resizable in both dimensions, so a signature can be stretched out of proportion if you drag unevenly — nothing currently locks the ratio while resizing.
 - **PDF parsing is sandboxed**: every operation touching an uploaded PDF runs in a short-lived, resource-limited subprocess (see [`docs/DECISIONS.md`](./docs/DECISIONS.md#isoler-le-parsing-pdf-dans-un-sous-processus)), since a malformed PDF can crash the underlying C library. At most `SANDBOX_MAX_CONCURRENCY` of them run at once, and nothing they send back is unpickled (raw bytes + JSON only). This adds a small per-request overhead but keeps one bad file from taking down the whole backend. The sandbox is a resource boundary, not a security boundary in the OS sense: the subprocess runs as the same user with the same filesystem/network access.
+- **Language detection needs Vercel**: the country comes from Vercel's `x-vercel-ip-country` header. Without it (local dev, another host), every visitor gets French until they use the switch; the browser's `Accept-Language` isn't used.
 - **Server capacity is bounded**: open documents expire after 30 minutes of inactivity, and total memory use is capped (see Configuration). On a full server, uploads get a `503` and should be retried later.
 - **Reusing the original font** only works if it exposes a usable Unicode cmap. Most PDFs produced by Word or a virtual printer embed subsetted Identity-H fonts without one. In that (very common) case Glyph falls back, in order, to:
   1. the real proprietary font, if the backend happens to run on macOS (Arial, Arial Narrow, Times New Roman, Courier New, Georgia, Verdana, Tahoma);

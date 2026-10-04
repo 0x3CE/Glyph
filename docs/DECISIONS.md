@@ -305,3 +305,20 @@ Valeurs par défaut pensées pour une instance de 512 Mo à 1 Go : 2 × 512 Mo d
 **Trouvé par un audit de sécurité** : le parseur multipart de Starlette (`UploadFile`) écrit sur disque, dans un fichier temporaire, toute partie de plus de 1 Mo, alors que le site promet que rien n'est écrit sur disque. Et la limite de 20 Mo n'était vérifiée qu'après réception complète : un envoi de plusieurs Go remplissait `/tmp` avant d'être refusé.
 
 **Ce qu'on fait** : le PDF (et le fichier de signature) part en corps brut (`Content-Type: application/pdf`, ou le type de l'image). Le rectangle de la signature passe en paramètres de requête. `_read_body` (`main.py`) refuse d'emblée un `Content-Length` trop grand, puis lit le flux en mémoire et coupe dès que la limite est dépassée, ce qui couvre aussi un envoi chunked sans `Content-Length`. `python-multipart` n'est plus une dépendance.
+
+## Site bilingue : des URL distinctes, le pays seulement comme premier choix
+
+**Demandé par l'utilisateur** : afficher le site en anglais pour les visiteurs dont l'IP n'est pas en France ou dans un territoire français.
+
+**Pourquoi pas la même URL avec un contenu adapté au pays** : Google explore surtout depuis les États-Unis. Il n'aurait vu que la version anglaise de `/`, et la page française aurait disparu des résultats. Les deux langues ont donc chacune leur URL : le français sans préfixe (`/`, `/editor`, inchangées pour ne pas casser les liens existants), l'anglais sous `/en`. Elles se déclarent l'une l'autre (`hreflang`, avec `x-default` vers l'anglais) dans les balises et dans le sitemap.
+
+**Ce qu'on fait** (`proxy.ts`, le nouveau nom du middleware depuis Next 16) : pour une URL sans préfixe, le cookie `glyph-lang` du bouton FR/EN passe en premier, puis les robots d'indexation (jamais redirigés), puis le pays fourni par Vercel dans `x-vercel-ip-country`. Aucune adresse IP n'est lue ni stockée par l'application, ce qui reste cohérent avec le « sans traçage » du site. Le cookie est une préférence fonctionnelle, pas un traceur, donc pas de bandeau de consentement. Une URL `/en/...` explicite n'est jamais redirigée : un lien partagé ou indexé s'ouvre dans la langue où il a été partagé, même pour un visiteur en France.
+
+**Liste des pays « français »** : `FR` ne suffit pas. Chaque département et collectivité d'outre-mer a son propre code ISO (`GP`, `MQ`, `GF`, `RE`, `YT`, `PM`, `BL`, `MF`, `WF`, `PF`, `NC`, `TF`), et Monaco s'y ajoute. Belgique, Suisse, Luxembourg et Québec reçoivent volontairement l'anglais (choix de l'utilisateur) : y basculer en français toucherait aussi les néerlandophones, germanophones et anglophones de ces pays.
+
+**Pièges rencontrés** :
+- un `openGraph` défini dans une page remplace celui du layout au lieu de s'y ajouter : `og:locale` et `og:site_name` avaient disparu. `localeOpenGraph()` (`lib/i18n/metadata.ts`) renvoie maintenant le bloc complet ;
+- `not-found.tsx` ne reçoit pas de paramètres : la langue de la 404 vient de `next/root-params`. Une route attrape-tout (`app/[lang]/[...rest]`) appelle `notFound()`, pour qu'une URL inconnue reçoive la 404 traduite avec un vrai statut 404 ;
+- le bouton de langue est masqué dans l'éditeur dès qu'un document est ouvert, puisque changer de page déclenche `pagehide`, qui supprime le document.
+
+**Limite assumée** : hors de Vercel (en local, ou sur un autre hébergeur), l'en-tête pays n'existe pas et tout le monde reçoit le français jusqu'au clic sur le bouton. L'en-tête `Accept-Language` du navigateur n'est pas utilisé, conformément à la demande (le pays, pas la langue du navigateur).

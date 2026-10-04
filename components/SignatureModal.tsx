@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
 interface SignatureModalProps {
   onConfirm: (blob: Blob, aspectRatio: number) => void;
@@ -15,6 +16,7 @@ const CANVAS_HEIGHT = 180;
 const ACCEPTED_TYPES = ["application/pdf", "image/png", "image/jpeg"];
 
 export function SignatureModal({ onConfirm, onClose }: SignatureModalProps) {
+  const { t } = useI18n();
   const [tab, setTab] = useState<Tab>("draw");
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
@@ -81,7 +83,7 @@ export function SignatureModal({ onConfirm, onClose }: SignatureModalProps) {
 
   const pickFile = (f: File) => {
     if (!ACCEPTED_TYPES.includes(f.type)) {
-      setFileError("Format non supporté — PDF, PNG ou JPG uniquement.");
+      setFileError(t.signatureModal.unsupportedFile);
       return;
     }
     setFileError(null);
@@ -114,18 +116,18 @@ export function SignatureModal({ onConfirm, onClose }: SignatureModalProps) {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal signature-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>Ajouter une signature</h2>
-          <button className="btn btn-icon" onClick={onClose} title="Fermer">
+          <h2>{t.signatureModal.title}</h2>
+          <button className="btn btn-icon" onClick={onClose} title={t.signatureModal.close}>
             ✕
           </button>
         </div>
 
         <div className="tab-row">
           <button className={`tab ${tab === "draw" ? "tab-active" : ""}`} onClick={() => setTab("draw")}>
-            Dessiner
+            {t.signatureModal.draw}
           </button>
           <button className={`tab ${tab === "upload" ? "tab-active" : ""}`} onClick={() => setTab("upload")}>
-            Importer un fichier
+            {t.signatureModal.upload}
           </button>
         </div>
 
@@ -143,10 +145,10 @@ export function SignatureModal({ onConfirm, onClose }: SignatureModalProps) {
             />
             <div className="modal-actions">
               <button className="btn btn-ghost" onClick={clearCanvas} disabled={!hasDrawn}>
-                Effacer
+                {t.signatureModal.clear}
               </button>
               <button className="btn btn-accent" onClick={confirmDrawing} disabled={!hasDrawn}>
-                Utiliser cette signature
+                {t.signatureModal.useDrawing}
               </button>
             </div>
           </div>
@@ -155,7 +157,7 @@ export function SignatureModal({ onConfirm, onClose }: SignatureModalProps) {
         {tab === "upload" && (
           <div className="signature-tab-panel">
             <label className="btn btn-ghost">
-              Choisir un fichier (PDF, PNG, JPG)
+              {t.signatureModal.chooseFile}
               <input
                 type="file"
                 accept="application/pdf,image/png,image/jpeg"
@@ -170,7 +172,7 @@ export function SignatureModal({ onConfirm, onClose }: SignatureModalProps) {
             {fileError && <p className="signature-file-error">{fileError}</p>}
             <div className="modal-actions">
               <button className="btn btn-accent" onClick={confirmFile} disabled={!file}>
-                Utiliser ce fichier
+                {t.signatureModal.useFile}
               </button>
             </div>
           </div>

@@ -49,9 +49,10 @@ Comme `structure` et `edit` **recalculent** `extract_structure()` à chaque appe
 | `components/PdfPage.tsx` | Rendu canvas + overlay cliquable + `<textarea>` d'édition + intègre `SignaturePlacer`. |
 | `components/SignatureModal.tsx` | Capture de la signature source : dessin sur `<canvas>`, ou import d'un fichier PDF/PNG/JPG. |
 | `components/SignaturePlacer.tsx` | Cadre déplaçable/redimensionnable pour positionner la signature sur la page avant validation. |
-| `components/EditorApp.tsx` | Écran `/editor` complet (upload, navigation de page, undo/redo, signature, téléchargement). |
+| `components/EditorApp.tsx` | Écran `/editor` (et `/en/editor`) complet (upload, navigation de page, undo/redo, signature, téléchargement). |
 | `lib/api-client.ts` | Tous les appels `fetch` vers le backend, typés. |
-| `app/page.tsx` | Page marketing statique (SSG) — voir la section SEO du README. |
+| `app/[lang]/page.tsx` | Page marketing statique (SSG), générée pour `fr` et `en` — voir la section SEO du README. |
+| `proxy.ts` + `lib/i18n/` | Choix de la langue (préfixe `/en`, pays à la première visite, cookie) et dictionnaires `fr` / `en` — voir [`DECISIONS.md`](./DECISIONS.md#site-bilingue--des-url-distinctes-le-pays-seulement-comme-premier-choix). |
 
 ## Ce qui n'est PAS là
 
