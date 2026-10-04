@@ -26,6 +26,11 @@ from app.isolation import SandboxBusyError, SandboxError, run_isolated  # noqa: 
 
 
 class SandboxProtocolTests(unittest.TestCase):
+    def test_children_are_forked_from_a_preloaded_server(self):
+        # `spawn` re-imported the whole engine in every child: ~3 s per
+        # operation on Render. Don't silently go back to it.
+        self.assertEqual(isolation._CTX.get_start_method(), "forkserver")
+
     def test_returns_json_meta_and_raw_blob(self):
         meta, blob = run_isolated(sandbox_workers.ok, [1, 2])
         self.assertEqual(meta, {"value": [1, 2]})

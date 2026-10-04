@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { getDocument } from "pdfjs-dist";
-import type { PDFPageProxy } from "pdfjs-dist";
+import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 import "../lib/pdf-setup";
 import { addSignature, editBlock, fetchDocumentBytes, getPageStructure } from "../lib/api-client";
 import type { Block } from "../lib/types";
@@ -52,19 +52,51 @@ export function PdfPage({
   const [loading, setLoading] = useState(true);
   const [signatureSaving, setSignatureSaving] = useState(false);
 
+  // The PDF itself only changes with `version` (an edit, undo/redo, a
+  // signature): turning the page reuses the document already downloaded and
+  // parsed by pdf.js, instead of fetching and parsing the whole file again.
+  type CachedPdf = { key: string; doc: Promise<PDFDocumentProxy>; loading: { task: PDFDocumentLoadingTask | null } };
+  const pdfRef = useRef<CachedPdf | null>(null);
+  const release = (cached: CachedPdf | null) => {
+    // pdf.js 6 frees a document through its loading task.
+    cached?.doc.then(() => cached.loading.task?.destroy()).catch(() => {});
+  };
+  const loadPdf = (key: string): Promise<PDFDocumentProxy> => {
+    if (pdfRef.current?.key !== key) {
+      const previous = pdfRef.current;
+      const loading: CachedPdf["loading"] = { task: null };
+      const doc = fetchDocumentBytes(documentId)
+        .then((bytes) => {
+          loading.task = getDocument({ data: bytes });
+          return loading.task.promise;
+        })
+        .catch((err) => {
+          if (pdfRef.current?.doc === doc) pdfRef.current = null; // let the next attempt retry
+          throw err;
+        });
+      pdfRef.current = { key, doc, loading };
+      release(previous);
+    }
+    return pdfRef.current.doc;
+  };
+  useEffect(
+    () => () => {
+      release(pdfRef.current);
+      pdfRef.current = null;
+    },
+    [],
+  );
+
   useEffect(() => {
     let cancelled = false;
     setEditing(null);
 
     async function run() {
       setLoading(true);
-      const [bytes, structure] = await Promise.all([
-        fetchDocumentBytes(documentId),
+      const [pdf, structure] = await Promise.all([
+        loadPdf(`${documentId}:${version}`),
         getPageStructure(documentId, pageIndex),
       ]);
-      if (cancelled) return;
-
-      const pdf = await getDocument({ data: bytes }).promise;
       if (cancelled) return;
       const page: PDFPageProxy = await pdf.getPage(pageIndex + 1);
       if (cancelled) return;

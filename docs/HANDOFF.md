@@ -67,7 +67,7 @@ flowchart LR
         MAIN["main.py<br/>routes HTTP<br/>corps bruts, validation"]
         DOCS["documents.py<br/>PDF en mémoire<br/>expiration, plafonds"]
     end
-    SB["Sous-processus sandbox (spawn)<br/>pdf_engine/ : structure, édition, signature<br/>512 Mo, 8 s CPU, 15 s, 2 à la fois"]
+    SB["Sous-processus sandbox (forkserver)<br/>pdf_engine/ : structure, édition, signature<br/>512 Mo, 8 s CPU, 15 s, 2 à la fois"]
     FONTS["app/fonts/ : ~240 familles libres<br/>installées au build, vérifiées par SHA-256"]
 
     FE -- "/api/* (proxy)" --> MAIN
@@ -186,7 +186,7 @@ Tout PDF uploadé est traité comme hostile : MuPDF est une bibliothèque C avec
 
 **La sandbox** (`isolation.py`) :
 
-- chaque opération qui lit un PDF tourne dans un sous-processus `spawn` neuf, avec au maximum 512 Mo de mémoire, 8 s de CPU et 15 s de temps réel ;
+- chaque opération qui lit un PDF tourne dans un sous-processus jetable, avec au maximum 512 Mo de mémoire, 8 s de CPU et 15 s de temps réel. Il est copié (`forkserver`) d'un processus qui a préchargé le moteur une fois pour toutes : environ 10 ms de démarrage au lieu de plusieurs secondes avec l'ancien `spawn` ;
 - au plus 2 sous-processus en même temps ; les requêtes suivantes attendent une place jusqu'à 20 s, puis reçoivent un `503` ;
 - le résultat revient en JSON plus des octets bruts (`send_bytes` / `recv_bytes`, 64 Mo au plus), jamais en pickle. Un sous-processus compromis ne peut donc pas faire exécuter de code au processus principal. Le JSON est validé par les modèles Pydantic avant usage ;
 - un délai de garde tue le sous-processus s'il se bloque, même en plein envoi ;
@@ -274,7 +274,7 @@ Règle de dimensionnement : `SANDBOX_MAX_CONCURRENCY` × `SANDBOX_MAX_MEMORY_MB`
 
 - pour simuler un serveur Linux, patcher `pdf_engine.fonts._SYSTEM_FONT_DIR` (le module), pas `pdf_engine._SYSTEM_FONT_DIR` (la réexportation, sans effet) ;
 - un test qui a besoin d'une police téléchargée appelle `_require_bundled("<clé>")`, qui le marque `skip` si elle manque ;
-- les fonctions lancées dans la sandbox pendant les tests vivent dans `tests/sandbox_workers.py`, car `spawn` les réimporte par nom de module ;
+- les fonctions lancées dans la sandbox pendant les tests vivent dans `tests/sandbox_workers.py`, car le sous-processus les réimporte par nom de module ;
 - `backend/smoke_test.py` est un script manuel, hors de la suite.
 
 ## Limitations connues et travaux restants

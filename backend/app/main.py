@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import os
+from contextlib import asynccontextmanager
 from typing import TypeVar
 
 from fastapi import FastAPI, HTTPException, Request
@@ -10,7 +12,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ValidationError
 
 from . import documents
-from .isolation import SandboxBusyError, SandboxError, run_isolated
+from .isolation import SandboxBusyError, SandboxError, run_isolated, warm_up
 from .pdf_engine import (
     worker_add_signature,
     worker_apply_edit,
@@ -33,7 +35,19 @@ MAX_SIGNATURE_BYTES = int(os.environ.get("MAX_SIGNATURE_MB", "5")) * 1024 * 1024
 _allowed_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000")
 ALLOWED_ORIGINS = [origin.strip() for origin in _allowed_origins.split(",") if origin.strip()]
 
-app = FastAPI(title="PDF Editor API")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Start the sandbox's forkserver (and its preloaded PDF engine) now, so
+    # the first visitor doesn't pay for it. Not fatal: run_isolated starts it
+    # on demand anyway.
+    try:
+        await run_in_threadpool(warm_up)
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("sandbox warm-up failed")
+    yield
+
+
+app = FastAPI(title="PDF Editor API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,

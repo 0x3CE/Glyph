@@ -128,13 +128,15 @@ Le pire qu'un PDF hostile peut faire est donc de gâcher un sous-processus de co
 
 **Pourquoi `spawn` et pas `fork`** : `fork` copierait les descripteurs de fichiers et l'état déjà chargé des extensions C du process parent (uvicorn, threads inclus) — dangereux à combiner avec des threads, et ça viderait une partie de l'intérêt de l'isolation. `spawn` redémarre un interpréteur propre à chaque appel : plus lent (~quelques dizaines à centaines de ms de coût d'import par appel), mais chaque appel part d'un état vierge.
 
+**Mise à jour : `forkserver` avec préchargement, plus `spawn`.** En production, chaque opération prenait environ 3 secondes (chaque upload, chaque changement de page), alors que le téléchargement du PDF prenait 0,17 s : le réseau n'y était pour rien. `spawn` démarre un interpréteur neuf qui réimporte PyMuPDF, fontTools et tout le moteur à chaque appel, et sur le petit processeur de Render ce chargement coûtait l'essentiel du temps. Désormais, `forkserver` démarre une fois un processus serveur propre (lancé à neuf, pas copié depuis l'API), qui précharge `app.pdf_engine` (`set_forkserver_preload`) ; chaque opération est une copie (`fork`) de CE processus. Les objections à `fork` ci-dessus ne s'appliquent pas : le serveur n'a qu'un seul thread et ne détient ni les sockets ni les descripteurs de l'API, seulement les modules préchargés. Chaque opération reste un processus jetable, avec ses limites mémoire et CPU et son dossier temporaire. Mesuré en local : 122 ms → 11 ms par opération. Le serveur est démarré au lancement de l'API (`warm_up()` dans le `lifespan` de `main.py`), pour que le premier visiteur ne paie pas ce démarrage.
+
 **Le sous-processus est traité comme potentiellement compromis** (ajouté après un audit de sécurité) : un PDF qui exploiterait une faille mémoire de MuPDF contrôlerait l'enfant. Or `multiprocessing` renvoie normalement les résultats en pickle, et dépickler des données qu'on ne contrôle pas revient à exécuter du code : l'enfant compromis aurait pu exécuter du code dans le process API, ce qui annule l'isolation. Désormais :
 
 - chaque worker renvoie `(meta, blob)` : des métadonnées JSON et des octets bruts (le PDF ré-enregistré) ou rien ;
 - les deux transitent par `send_bytes`/`recv_bytes`, deux trames dont la taille est bornée (`SANDBOX_MAX_RESULT_MB`) ;
 - le parent ne fait que `json.loads`, puis valide `meta` avec les modèles Pydantic de réponse avant de s'en servir (`_validated` dans `main.py`).
 
-Le pickle ne sert plus que dans le sens parent → enfant (le passage d'arguments de `spawn`), où c'est l'émetteur qui est de confiance.
+Le pickle ne sert plus que dans le sens parent → enfant (le passage des arguments de l'appel), où c'est l'émetteur qui est de confiance.
 
 **Délai de garde plutôt que `poll`** : un enfant qui envoie l'en-tête de longueur d'une trame puis se bloque laisserait `recv_bytes` attendre indéfiniment. Un `threading.Timer` tue l'enfant au bout de `TIMEOUT_SECONDS`, ce qui ferme le pipe et débloque la lecture avec `EOFError`.
 

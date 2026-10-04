@@ -4,21 +4,28 @@ PyMuPDF is a C library parsing files nobody here controls the origin of.
 A malformed or adversarial PDF that segfaults, OOMs, or infinite-loops the
 process handling it would otherwise take down the whole API (and every other
 in-flight request) with it. Every call that touches PDF bytes we didn't
-generate ourselves goes through `run_isolated`: a fresh `spawn`-ed process
-per call, with hard memory/CPU/wall-clock limits, so the worst a hostile PDF
-can do is waste one short-lived process.
+generate ourselves goes through `run_isolated`: a fresh process per call,
+with hard memory/CPU/wall-clock limits, so the worst a hostile PDF can do is
+waste one short-lived process.
 
-`spawn` (not `fork`) deliberately: fork would copy the parent's file
-descriptors and already-imported C extension state, which defeats the
-purpose of isolation and is unsafe to combine with threads (uvicorn's).
+`forkserver`, with the engine preloaded: a dedicated server process is
+started once (cleanly, not forked from the API), imports `app.pdf_engine`
+(PyMuPDF, fontTools...) once, and every call is a fork of THAT process.
+Never a plain `fork` of the API process itself: that would copy its file
+descriptors and sockets, and forking uvicorn's multi-threaded process is
+unsafe. The forkserver is single-threaded and holds nothing but the
+preloaded modules, and each child is still a separate, throwaway,
+resource-limited copy. It replaced `spawn`, which re-imported the whole
+engine in every child: measured ~3 s per operation on Render's small CPU
+(every upload, every page change), vs ~120 ms -> ~11 ms locally.
 
 The child is treated as potentially compromised (a memory-corruption bug in
 MuPDF exploited by the PDF it's parsing), so nothing it sends back is ever
 unpickled: results travel as one length-bounded JSON frame plus an optional
 length-bounded raw-bytes frame (`Connection.send_bytes`/`recv_bytes`, no
 pickle involved), and callers validate the JSON against their response
-models. Pickle is only used parent -> child (spawn's own argument passing),
-the direction where the sender is trusted.
+models. Pickle is only used parent -> child (the call's own argument
+passing), the direction where the sender is trusted.
 """
 
 from __future__ import annotations
@@ -33,7 +40,9 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
-_CTX = mp.get_context("spawn")
+_CTX = mp.get_context("forkserver")
+# Must be set before the forkserver starts (on the first call, or warm_up()).
+_CTX.set_forkserver_preload(["app.pdf_engine"])
 
 MAX_MEMORY_BYTES = int(os.environ.get("SANDBOX_MAX_MEMORY_MB", "512")) * 1024 * 1024
 MAX_CPU_SECONDS = int(os.environ.get("SANDBOX_MAX_CPU_SECONDS", "8"))
@@ -172,3 +181,13 @@ def run_isolated(fn: Callable[..., Any], *args: Any) -> tuple[Any, bytes | None]
             proc.join(2)
         shutil.rmtree(scratch_dir, ignore_errors=True)
         _SLOTS.release()
+
+
+def _noop() -> tuple[dict, None]:
+    return {}, None
+
+
+def warm_up() -> None:
+    """Start the forkserver and preload the engine now (at API startup)
+    rather than on the first visitor's request."""
+    run_isolated(_noop)
