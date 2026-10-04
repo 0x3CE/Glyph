@@ -116,7 +116,7 @@ export const fr = {
       },
       {
         q: "Y a-t-il des limites ?",
-        a: "Quelques-unes. Les PDF jusqu'à 20 Mo, sans mot de passe. L'édition se fait ligne par ligne : une adresse sur trois lignes se modifie en trois clics. Un fond coloré derrière le texte modifié est effacé avec lui. Et certains PDF, comme des fiches de paie, protègent leur texte : on peut quand même modifier une ligne, mais il faut la retaper en entier.",
+        a: "Quelques-unes. Les PDF jusqu'à 20 Mo, sans mot de passe. L'édition se fait ligne par ligne : une adresse sur trois lignes se modifie en trois clics. Un fond coloré derrière le texte modifié est effacé avec lui. Et certains PDF, comme des fiches de paie, ne permettent pas de relire leur texte : on peut quand même modifier une ligne, mais il faut la retaper en entier.",
       },
       { q: "Faut-il un compte pour l'utiliser ?", a: "Non, l'éditeur est utilisable directement." },
     ],
@@ -168,7 +168,7 @@ export const fr = {
     confirm: "Valider",
     signatureAlt: "Signature",
     unreadableText:
-      "Le texte d'origine de cette ligne n'est pas lisible : ce PDF le protège ou l'encode. Retape la ligne en entier.",
+      "Le texte d'origine de cette ligne n'est pas lisible : ce PDF ne permet pas de relire son texte. Retape la ligne en entier.",
     unreadablePlaceholder: "Retape la ligne…",
   },
   signatureModal: {

@@ -168,7 +168,7 @@ Quand la police finale n'est pas l'originale, une compression horizontale (entre
 **Le catalogue** (`pdf_engine/font_catalog.py`) liste environ 240 familles, chacune avec ses alias de nom, sa catégorie, son dossier et sa source :
 
 - les familles Google Fonts, Latin Modern (documents LaTeX) et DejaVu : la police d'origine elle-même ;
-- des clones aux mêmes métriques pour les polices propriétaires : Liberation (Arial, Times New Roman, Courier New), Carlito (Calibri), Caladea (Cambria), Gelasio (Georgia), Nimbus Sans et Nimbus Sans Narrow (Helvetica, Arial Narrow), les URW base35 (Palatino, Century, Bookman…), Selawik (Segoe UI).
+- des clones aux mêmes métriques pour les polices propriétaires : Liberation (Arial, Times New Roman), Nimbus Mono PS (Courier New, avec Liberation Mono en secours), Carlito (Calibri), Caladea (Cambria), Gelasio (Georgia), Nimbus Sans et Nimbus Sans Narrow (Helvetica, Arial Narrow), les URW base35 (Palatino, Century, Bookman…), Selawik (Segoe UI).
 
 Les alias sont testés du plus long au plus court (`robotomono` avant `roboto`). Un alias de moins de 6 caractères ne marche qu'en début de nom, pour que `inter` ne déclenche pas sur `WinterSans`.
 

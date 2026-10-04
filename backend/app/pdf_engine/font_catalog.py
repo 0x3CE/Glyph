@@ -76,6 +76,9 @@ class FontFamily:
     same_typeface: bool
     source: GoogleSource | UrlSource | ZipSource | None = None  # None = committed to the repo
     license_file: str = "LICENSE"
+    # Family to use instead when this one's files aren't on disk (not
+    # fetched): a committed one, so a common family never drops to a generic.
+    fallback: str | None = None
 
 
 def _slug(name: str) -> str:
@@ -103,8 +106,9 @@ _URW = "https://raw.githubusercontent.com/ArtifexSoftware/urw-base35-fonts/3c0ba
 _URW_LICENSE = _URW + "COPYING"
 
 
-def _urw(key: str, category: str, files: dict[Style, str], *aliases: str) -> FontFamily:
+def _urw(key: str, category: str, files: dict[Style, str], *aliases: str, fallback: str | None = None) -> FontFamily:
     return FontFamily(
+        fallback=fallback,
         key=key,
         category=category,
         directory="urw",
@@ -166,7 +170,17 @@ CATALOG: tuple[FontFamily, ...] = (
     # --- Metric-compatible stand-ins for proprietary fonts -----------------
     _liberation("arial", "sans", "LiberationSans", "arial", "liberationsans", "arimo"),
     _liberation("times new roman", "serif", "LiberationSerif", "timesnewroman", "times", "liberationserif", "tinos"),
-    _liberation("courier new", "mono", "LiberationMono", "couriernew", "courier", "liberationmono", "cousine"),
+    # Courier / Courier New: Nimbus Mono PS (URW's Courier clone) rather than
+    # Liberation Mono. Both have Courier's exact 0.6 em pitch, but Liberation
+    # Mono's strokes are much heavier: a retyped payslip line stood out as
+    # "bold" next to its thin Courier neighbours in production (Linux, where
+    # the real Courier New isn't available). Liberation Mono stays as the
+    # committed fallback.
+    _urw("courier new", "mono", {
+        REGULAR: "NimbusMonoPS-Regular.ttf", BOLD: "NimbusMonoPS-Bold.ttf",
+        ITALIC: "NimbusMonoPS-Italic.ttf", BOLD_ITALIC: "NimbusMonoPS-BoldItalic.ttf",
+    }, "couriernew", "courier", "nimbusmono", "texgyrecursor", fallback="liberation mono"),
+    _liberation("liberation mono", "mono", "LiberationMono", "liberationmono", "cousine"),
     _google("Carlito", "sans", "calibri", key="calibri", same_typeface=False),
     _google("Caladea", "serif", "cambria", key="cambria", same_typeface=False),
     _google("Gelasio", "serif", "georgia", key="georgia", same_typeface=False),

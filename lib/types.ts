@@ -17,7 +17,7 @@ export interface Block {
   bbox: [number, number, number, number];
   lines: Line[];
   text: string;
-  /** False when the PDF hides its real text (scrambled character map): `text`
+  /** False when the PDF's text can't be read back (no usable character map): `text`
    * is then garbage and the line has to be retyped in full. Optional: a backend
    * older than this field omits it, and its text must then be trusted. */
   text_reliable?: boolean;

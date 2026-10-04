@@ -3335,6 +3335,22 @@
    "url": "https://raw.githubusercontent.com/ArtifexSoftware/urw-base35-fonts/3c0ba3b5687632dfc66526544a4e811fe0ec0cd9/fonts/COPYING",
    "sha256": "57c8ff33c9c0cfc3ef00e650a1cc910d7ee479a8bc509f6c9209a7c2a11399d6"
   },
+  "urw/NimbusMonoPS-Bold.ttf": {
+   "url": "https://raw.githubusercontent.com/ArtifexSoftware/urw-base35-fonts/3c0ba3b5687632dfc66526544a4e811fe0ec0cd9/fonts/NimbusMonoPS-Bold.ttf",
+   "sha256": "068c0ab2d516f9da930421b75fa5dd00892764cf635c9e423e602e01c44bcb83"
+  },
+  "urw/NimbusMonoPS-BoldItalic.ttf": {
+   "url": "https://raw.githubusercontent.com/ArtifexSoftware/urw-base35-fonts/3c0ba3b5687632dfc66526544a4e811fe0ec0cd9/fonts/NimbusMonoPS-BoldItalic.ttf",
+   "sha256": "3b19993e134cd18bb4ee7c6a811a39eacf287d2f1f4b41121de00dcf034c734d"
+  },
+  "urw/NimbusMonoPS-Italic.ttf": {
+   "url": "https://raw.githubusercontent.com/ArtifexSoftware/urw-base35-fonts/3c0ba3b5687632dfc66526544a4e811fe0ec0cd9/fonts/NimbusMonoPS-Italic.ttf",
+   "sha256": "ab1fd6320a326643a9be6bddb65abcf499a51f3efad5578f291302ebbc7a28bc"
+  },
+  "urw/NimbusMonoPS-Regular.ttf": {
+   "url": "https://raw.githubusercontent.com/ArtifexSoftware/urw-base35-fonts/3c0ba3b5687632dfc66526544a4e811fe0ec0cd9/fonts/NimbusMonoPS-Regular.ttf",
+   "sha256": "bf749d47bf69f4bf6963833afb66a3a5b6e62185bfffaf068b7a1b3f0276ba82"
+  },
   "urw/NimbusSans-Bold.ttf": {
    "url": "https://raw.githubusercontent.com/ArtifexSoftware/urw-base35-fonts/3c0ba3b5687632dfc66526544a4e811fe0ec0cd9/fonts/NimbusSans-Bold.ttf",
    "sha256": "148726be75d2060a38dfd2e2637569f56c82af9f671e97131023b47add06f2cb"

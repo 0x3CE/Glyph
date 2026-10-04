@@ -20,7 +20,8 @@ class BlockOut(BaseModel):
     bbox: tuple[float, float, float, float]
     lines: list[LineOut]
     text: str
-    # False: the PDF hides its real text (scrambled/missing character map);
+    # False: the PDF's text can't be read back (no character map, or a
+    # ToUnicode table that doesn't match the codes drawn);
     # `text` is then meaningless and the line must be retyped in full.
     text_reliable: bool = True
 

@@ -11,11 +11,13 @@ doesn't require adding a test framework to run it.
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -290,7 +292,7 @@ class BundledFontFallbackTests(unittest.TestCase):
         # Liberation and Open Sans are committed (the rest of the catalog is
         # fetched by scripts/fetch_fonts.py at build time): they're the floor
         # every environment is guaranteed to have.
-        for key in ("arial", "times new roman", "courier new", "open sans"):
+        for key in ("arial", "times new roman", "liberation mono", "open sans"):
             family = font_catalog.BY_KEY[key]
             for filename in family.files.values():
                 path = pdf_engine._BUNDLED_FONT_DIR / family.directory / filename
@@ -369,6 +371,19 @@ class FontCatalogTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(pdf_engine._family_for_original(name), expected)
 
+    def test_courier_uses_nimbus_mono_then_falls_back_to_liberation_mono(self):
+        # Liberation Mono's strokes are far heavier than Courier's: a retyped
+        # payslip line looked bold in production. Nimbus Mono PS when it was
+        # fetched, the committed Liberation Mono otherwise.
+        _require_bundled("courier new")
+        path, _same = pdf_engine._family_font("courier new", False, False)
+        self.assertTrue(path.endswith("NimbusMonoPS-Regular.ttf"), path)
+        missing = dataclasses.replace(font_catalog.BY_KEY["courier new"], directory="not-fetched")
+        with mock.patch.dict(font_catalog.BY_KEY, {"courier new": missing}):
+            path, same = pdf_engine._family_font("courier new", False, False)
+        self.assertTrue(path.endswith("LiberationMono-Regular.ttf"), path)
+        self.assertFalse(same)
+
     def test_short_needles_only_match_as_a_prefix(self):
         # "inter" / "cmr" must not fire inside an unrelated longer name.
         self.assertIsNone(pdf_engine._family_for_original("WinterSans-Regular"))
@@ -434,13 +449,13 @@ class FontCatalogTests(unittest.TestCase):
 
 class UnreadableTextLayerTests(unittest.TestCase):
     """Some PDFs (a real payslip) draw text with fonts that have no
-    character map and a deliberately scrambled ToUnicode table: the page
-    looks right, but "Emploi : INGENIEUR SYSTEME" extracts as
+    character map and a ToUnicode table that doesn't match the glyph codes
+    drawn: the page looks right, but "Emploi : INGENIEUR SYSTEME" extracts as
     "6T:SVR\\x01...". Editing must not diff against that garbage, and the
     replacement must keep the original's width and fixed pitch."""
 
     LINE = "Emploi      : INGENIEUR SYSTEME"
-    # Same length, spaces scrambled to U+0001 -- what the payslip extracts as.
+    # Same length, spaces read back as U+0001 -- what the payslip extracts as.
     SCRAMBLED = "6T:SVR\x01\x01\x01\x01\x01\x01\x011\x01:!86!:6EB\x01CHCD6 6"
 
     def _scrambled_block(self, fontname="cour"):

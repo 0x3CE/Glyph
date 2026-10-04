@@ -166,6 +166,10 @@ def _family_font(family: str, bold: bool, italic: bool, *, system: bool = True) 
             filename = bundled.files.get(style)
             if filename and (_BUNDLED_FONT_DIR / bundled.directory / filename).is_file():
                 return str(_BUNDLED_FONT_DIR / bundled.directory / filename), bundled.same_typeface
+        if bundled.fallback:
+            found = _family_font(bundled.fallback, bold, italic, system=False)
+            if found:
+                return found[0], False
     return None
 
 

@@ -341,9 +341,9 @@ Valeurs par défaut pensées pour une instance de 512 Mo à 1 Go : 2 × 512 Mo d
 
 **Signalé par l'utilisateur sur une vraie fiche de paie** : la ligne « Emploi : INGENIEUR SYSTEME » modifiée devenait « environnement » seul, dans une autre police, et « Emploi » et « : » disparaissaient.
 
-**Cause** : ce PDF n'a pas de texte lisible par la machine. Ses polices (sous-ensembles « Identity-H ») n'ont ni table de caractères ni noms de glyphes (`glyph00001`…), et la table `ToUnicode` du PDF est volontairement brouillée, une substitution lettre à lettre (« Emploi » devient « 6T:SVR », les espaces deviennent U+0001). La page s'affiche normalement, mais le champ d'édition affichait ce charabia. L'utilisateur a tapé par-dessus et a effacé sans le savoir le libellé de la ligne. Aucune récupération n'est possible sans reconnaissance optique (OCR).
+**Cause** : ce PDF n'a pas de texte lisible par la machine, sans être chiffré ni protégé par mot de passe. Ses polices sont des sous-ensembles TrueType en encodage `Identity-H` (codes sur 2 octets = numéros de glyphes), sans table de caractères ni noms de glyphes (`glyph00001`…). La table `ToUnicode` existe, mais elle est écrite avec les numéros de glyphes de la police **complète** (3 = espace, 0x24 = « A », comme dans Courier New), alors que le sous-ensemble a renuméroté ses glyphes à partir de 1 : les codes réellement utilisés par la page ne correspondent pas, et la table ne couvre de toute façon qu'une partie des lettres (presque aucune minuscule). Faute de correspondance, le code brut sort tel quel : l'espace (glyphe 1) devient U+0001, « Emploi » devient « 6T:SVR ». C'est un défaut du logiciel qui a généré le fichier plutôt qu'une protection volontaire. La page s'affiche normalement, mais le champ d'édition affichait ce charabia. L'utilisateur a tapé par-dessus et a effacé sans le savoir le libellé de la ligne. Reconstruire le vrai texte demanderait de la reconnaissance optique (OCR).
 
-Second défaut révélé par ce fichier : ses quatre polices portent toutes le même nom brouillé et sont toutes marquées « serif », alors que deux sont proportionnelles et deux à chasse fixe (type Courier). Le nom et les drapeaux ne permettaient donc pas de choisir une police de remplacement adaptée.
+Second défaut révélé par ce fichier : ses quatre polices portent toutes le même nom sans signification (`font000000003072ff07`) et sont toutes marquées « serif », alors que deux sont proportionnelles et deux à chasse fixe (type Courier). Le nom et les drapeaux ne permettaient donc pas de choisir une police de remplacement adaptée.
 
 **Ce qu'on fait** :
 - `Block.text_reliable` vaut `False` dès que le texte extrait contient des caractères de contrôle ou U+FFFD. L'API le transmet ; l'éditeur ouvre alors le champ **vide**, avec une explication au-dessus, sans décaler le champ hors de la ligne. Laisser ce champ vide annule l'édition au lieu d'effacer la ligne ;
@@ -353,3 +353,11 @@ Second défaut révélé par ce fichier : ses quatre polices portent toutes le m
 - une police générique (Courier New pour une police inconnue à chasse fixe) n'est jamais considérée comme « la police d'origine », même si c'est un vrai fichier système : l'avertissement de substitution s'affiche.
 
 **Testé sur le fichier réel** : la ligne retapée « Emploi : INGENIEUR environnement » s'aligne sur « Niveau » et « Emploi type », dans une police de même chasse.
+
+## Courier : Nimbus Mono PS plutôt que Liberation Mono
+
+**Signalé par l'utilisateur** : une ligne de fiche de paie retapée était parfaite en local et paraissait « en gras » en production. En local, macOS fournit le vrai Courier New. Sur Render (Linux), le moteur prenait Liberation Mono : même chasse de 0,6 em (donc un alignement parfait), mais un trait bien plus épais que celui de Courier New, et la ligne ressortait à côté de ses voisines en Courier fin.
+
+**Comparaison faite sur le fichier réel** : Courier New (référence), Liberation Mono (trop épaisse), Cutive Mono (traits fins mais dessin de machine à écrire différent, chasse de 0,605 em), Nimbus Mono PS (le clone de Courier publié par URW, même dessin, chasse exacte de 0,600 em, trait à peine plus appuyé). C'est Nimbus Mono PS qui est retenue pour la famille « courier new » (et donc pour toute police inconnue à chasse fixe).
+
+**Secours** : Nimbus Mono PS est téléchargée au build, comme le reste du catalogue. Si elle manque, le nouveau champ `FontFamily.fallback` renvoie vers Liberation Mono, commitée, pour ne jamais retomber sur une police générique.

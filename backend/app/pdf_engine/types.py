@@ -50,13 +50,14 @@ class Block:
     @property
     def text_reliable(self) -> bool:
         """False when the PDF's text layer for this line can't be trusted to
-        say which characters are drawn. Some generators (payslips, notably)
-        ship fonts with no character map and a deliberately scrambled
-        ToUnicode table, so "Emploi : INGENIEUR SYSTEME" extracts as
-        "6T:SVR... 1 :!86!:6EB CHCD6 6": the page looks fine, but the text
-        we'd put in the edit field (and diff the user's edit against) is
-        garbage. Control characters (spaces come out as U+0001 there) and
-        U+FFFD (no mapping at all) give it away."""
+        say which characters are drawn. A real payslip had subset fonts with
+        no character map, plus a ToUnicode table written with the glyph
+        numbers of the FULL font while the subset had renumbered its glyphs
+        from 1 (and mapping only some of them): "Emploi : INGENIEUR SYSTEME"
+        extracts as "6T:SVR... 1 :!86!:6EB CHCD6 6". The page looks fine, but
+        the text we'd put in the edit field (and diff the user's edit
+        against) is garbage. Control characters (spaces come out as U+0001
+        there) and U+FFFD (no mapping at all) give it away."""
         return not any((ord(c) < 32 and c not in "\t\n") or c == "\ufffd" for c in self.text)
 
     @property
@@ -72,7 +73,7 @@ def _is_monospaced(chars: list[dict]) -> bool:
     fixed-width font, whatever its name or descriptor flags say. Measured on
     the page itself because neither is reliable -- a payslip seen in the wild
     had four different fonts (two proportional, two Courier-like) all under
-    the same scrambled name, all flagged "serif"."""
+    the same meaningless name, all flagged "serif"."""
     if len(chars) < 4:
         return False
     xs = [c["origin"][0] for c in chars]
