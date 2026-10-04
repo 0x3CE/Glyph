@@ -44,7 +44,7 @@ export const en: Dictionary = {
     lede: "The usual trick: cover the old text with a white box and type the new text on top. It looks fine on screen, but the document is still broken.",
     badTitle: "Overlay (the usual trick)",
     badText:
-      "The original text is still there under the box: search and copy-paste still return the old value. A colored background or a table ends up with a white patch that sticks out.",
+      "The original text is still there under the box: search and copy-paste still return the old value, and anyone can recover it by removing the box.",
     goodText:
       "The original glyphs are removed from the document and replaced with real text, in the right place, with the right font whenever possible. Nothing to hide: there's nothing left underneath.",
   },
@@ -54,7 +54,7 @@ export const en: Dictionary = {
     title: "Four steps, no trace of the old text",
     steps: [
       { title: "Drop your PDF", text: "Processed in memory, nothing is written to disk on the server." },
-      { title: "Click a field", text: "Glyph tells a paragraph from a table cell on its own." },
+      { title: "Click a line", text: "Each line is edited on its own: the lines around it are never touched." },
       {
         title: "The content is rewritten",
         text: "The old glyphs are truly removed, and the new text goes in with the original font when possible.",
@@ -73,13 +73,21 @@ export const en: Dictionary = {
       },
       {
         title: "Original font kept",
-        text: "Reused when it covers the characters needed; you're told when a fallback is used.",
+        text: "Reused when possible, otherwise the same family from 240 free fonts. You're told when it isn't the original.",
+      },
+      {
+        title: "Formatting kept",
+        text: "A bold or italic word keeps its style when you edit the rest of the line.",
       },
       {
         title: "Tables stay intact",
         text: "Each cell is edited on its own, without ever spilling into the cells next to it.",
       },
-      { title: "Undo / redo", text: "Full edit history for the document you're working on." },
+      {
+        title: "Signature",
+        text: "Draw it or upload one (PDF, PNG, JPG), then drag it into place. A PDF signature stays vector-sharp.",
+      },
+      { title: "Undo / redo", text: "Step back or forward through your edits for the whole editing session." },
     ],
   },
   faq: {
@@ -100,7 +108,11 @@ export const en: Dictionary = {
       },
       {
         q: "Does it work on tables?",
-        a: "Yes. Glyph tells a table cell from a paragraph on its own, so only the field you clicked changes and the cells next to it are never touched.",
+        a: "Yes. Every line is edited on its own, table cells included: only the text you clicked changes, and Glyph never erases anything in the cells next to it, even when they touch.",
+      },
+      {
+        q: "Are there any limits?",
+        a: "A few. PDFs up to 20 MB, without a password. Editing works line by line: a three-line address takes three clicks. And a colored background behind the edited text is erased along with it.",
       },
       { q: "Do I need an account?", a: "No, you can use the editor right away." },
     ],

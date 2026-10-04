@@ -6,9 +6,9 @@ export const fr = {
   meta: {
     title: "Glyph — l'éditeur PDF qui modifie vraiment le texte",
     description:
-      "Modifie le texte d'un PDF pour de vrai : le contenu d'origine est supprimé et réécrit, pas recouvert par un rectangle. Reflow, police d'origine, recherche et copier-coller intacts.",
+      "Modifie le texte d'un PDF pour de vrai : le contenu d'origine est supprimé et réécrit, pas recouvert par un rectangle. Police d'origine, recherche et copier-coller intacts.",
     siteDescription:
-      "Glyph réécrit le contenu d'un PDF au lieu de le recouvrir : le texte d'origine est supprimé, le nouveau réinséré avec la police d'origine. Reflow, recherche et copier-coller intacts.",
+      "Glyph réécrit le contenu d'un PDF au lieu de le recouvrir : le texte d'origine est supprimé, le nouveau réinséré avec la police d'origine. Recherche et copier-coller intacts.",
     keywords: ["éditeur PDF", "modifier texte PDF", "éditer PDF en ligne", "PDF sans overlay", "réécrire PDF"],
     ogDescription: "Le texte d'origine est supprimé du PDF, pas recouvert. Édition réelle, pas un calque.",
     ogLocale: "fr_FR",
@@ -37,7 +37,7 @@ export const fr = {
     titleLine2Accent: "vrai",
     titleLine2After: ".",
     subtitle:
-      "Glyph réécrit le contenu du PDF au lieu de le recouvrir : le texte d'origine est supprimé, le nouveau est réinséré avec la police d'origine quand c'est possible — reflow, recherche et copier-coller inclus.",
+      "Glyph réécrit le contenu du PDF au lieu de le recouvrir : le texte d'origine est supprimé, le nouveau est réinséré avec la police d'origine quand c'est possible — recherche et copier-coller inclus.",
     howItWorks: "Comment ça marche",
   },
   problem: {
@@ -47,7 +47,7 @@ export const fr = {
     lede: "La méthode classique : recouvrir l'ancien texte d'un rectangle blanc et écrire le nouveau par-dessus. Ça a l'air correct à l'écran, mais le document reste cassé.",
     badTitle: "Overlay (la méthode classique)",
     badText:
-      "Le texte d'origine reste présent sous le cache : recherche et copier-coller renvoient encore l'ancienne valeur. Un fond coloré ou un tableau se retrouve avec un carré blanc qui jure.",
+      "Le texte d'origine reste présent sous le cache : recherche et copier-coller renvoient encore l'ancienne valeur, et n'importe qui peut la retrouver en retirant le cache.",
     goodText:
       "Les glyphes d'origine sont supprimés du flux du document et remplacés par du vrai texte, à la bonne position, avec la bonne police quand c'est possible. Rien à cacher : il n'y a plus rien en dessous.",
   },
@@ -57,7 +57,7 @@ export const fr = {
     title: "Quatre étapes, aucune trace de l'ancien texte",
     steps: [
       { title: "Dépose ton PDF", text: "Traitement en mémoire, rien n'est écrit sur disque côté serveur." },
-      { title: "Clique sur un champ", text: "Glyph distingue automatiquement un paragraphe d'une cellule de tableau." },
+      { title: "Clique sur une ligne", text: "Chaque ligne s'édite à part : ses voisines ne sont jamais touchées." },
       {
         title: "Le contenu est réécrit",
         text: "Suppression réelle des anciens glyphes, réinsertion avec la police d'origine si possible.",
@@ -76,13 +76,21 @@ export const fr = {
       },
       {
         title: "Police d'origine préservée",
-        text: "Réutilisée quand elle couvre les caractères nécessaires ; repli signalé sinon.",
+        text: "Réutilisée quand c'est possible, sinon la même famille parmi 240 polices libres. Tu es prévenu quand ce n'est pas l'originale.",
+      },
+      {
+        title: "Formatage conservé",
+        text: "Un mot en gras ou en italique garde son style quand tu modifies le reste de la ligne.",
       },
       {
         title: "Tableaux respectés",
         text: "Chaque cellule est éditée indépendamment, sans jamais déborder sur ses voisines.",
       },
-      { title: "Annuler / rétablir", text: "Historique complet des modifications sur le document en cours d'édition." },
+      {
+        title: "Signature",
+        text: "Dessine-la ou importe-la (PDF, PNG, JPG), puis place-la où tu veux. Une signature PDF reste vectorielle.",
+      },
+      { title: "Annuler / rétablir", text: "Annule ou rétablis tes modifications pendant toute la session d'édition." },
     ],
   },
   faq: {
@@ -103,7 +111,11 @@ export const fr = {
       },
       {
         q: "Ça marche sur des tableaux ?",
-        a: "Oui. Glyph distingue automatiquement une cellule de tableau d'un paragraphe pour ne modifier que le champ cliqué, sans jamais toucher aux cellules voisines.",
+        a: "Oui. Chaque ligne est éditée séparément, cellules de tableau comprises : seul le texte cliqué change, et Glyph n'efface jamais rien dans les cellules voisines, même quand elles se touchent.",
+      },
+      {
+        q: "Y a-t-il des limites ?",
+        a: "Quelques-unes. Les PDF jusqu'à 20 Mo, sans mot de passe. L'édition se fait ligne par ligne : une adresse sur trois lignes se modifie en trois clics. Et un fond coloré derrière le texte modifié est effacé avec lui.",
       },
       { q: "Faut-il un compte pour l'utiliser ?", a: "Non, l'éditeur est utilisable directement." },
     ],
