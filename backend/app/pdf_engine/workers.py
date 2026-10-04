@@ -27,6 +27,7 @@ def _block_to_json(block: Block) -> Meta:
         "id": block.id,
         "bbox": block.bbox,
         "text": block.text,
+        "text_reliable": block.text_reliable,
         "lines": [
             {
                 "bbox": line.bbox,

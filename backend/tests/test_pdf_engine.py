@@ -432,6 +432,69 @@ class FontCatalogTests(unittest.TestCase):
         self.assertIn("\u20ac \u2713", page.get_text())
 
 
+class UnreadableTextLayerTests(unittest.TestCase):
+    """Some PDFs (a real payslip) draw text with fonts that have no
+    character map and a deliberately scrambled ToUnicode table: the page
+    looks right, but "Emploi : INGENIEUR SYSTEME" extracts as
+    "6T:SVR\\x01...". Editing must not diff against that garbage, and the
+    replacement must keep the original's width and fixed pitch."""
+
+    LINE = "Emploi      : INGENIEUR SYSTEME"
+    # Same length, spaces scrambled to U+0001 -- what the payslip extracts as.
+    SCRAMBLED = "6T:SVR\x01\x01\x01\x01\x01\x01\x011\x01:!86!:6EB\x01CHCD6 6"
+
+    def _scrambled_block(self, fontname="cour"):
+        doc, page = _page(width=400)
+        page.insert_text((40, 50), self.LINE, fontsize=10, fontname=fontname)
+        blocks = extract_structure(page)
+        block = blocks[0]
+        line = block.lines[0]
+        line.spans[:] = [Span(**{**sp.__dict__, "text": self.SCRAMBLED[: len(sp.text)]}) for sp in line.spans]
+        return doc, page, block, blocks
+
+    def test_control_characters_mark_the_text_as_unreliable(self):
+        _doc, _page_, block, _blocks = self._scrambled_block()
+        self.assertFalse(block.text_reliable)
+        _doc, page = _page()
+        page.insert_text((40, 50), "Montant : 12,50 €", fontsize=11, fontname="helv")
+        self.assertTrue(extract_structure(page)[0].text_reliable)
+
+    def test_fixed_pitch_is_detected_from_character_positions(self):
+        for fontname, mono in (("cour", True), ("helv", False)):
+            with self.subTest(font=fontname):
+                _doc, page = _page(width=400)
+                page.insert_text((40, 50), self.LINE, fontsize=10, fontname=fontname)
+                span = extract_structure(page)[0].dominant_span
+                self.assertEqual(bool(span.flags & pdf_engine.FLAG_MONOSPACE), mono)
+
+    def test_unreliable_line_is_rewritten_whole_at_the_original_width(self):
+        doc, page, block, blocks = self._scrambled_block()
+        mono = pdf_engine.fonts._family_font("courier new", False, False)[0]
+        choice = pdf_engine.FontChoice(fontname="x", fontfile=mono, substituted=True)
+        # Measuring the garbage (zero-width control characters) used to
+        # stretch the retyped line by ~40 %.
+        self.assertAlmostEqual(pdf_engine._metric_match_scale(block.dominant_span, choice), 1.0, delta=0.05)
+
+        apply_block_edit(doc, page, block, "Emploi      : INGENIEUR environnement", all_blocks=blocks)
+        self.assertIn("Emploi      : INGENIEUR environnement", page.get_text())
+
+    def test_a_generic_pick_is_reported_as_a_substitution(self):
+        # An unnamed fixed-width font gets Courier New: even as a real system
+        # file, it is not "the original typeface", so the user is warned.
+        with tempfile.TemporaryDirectory() as fake_system:
+            shutil.copy(pdf_engine._family_font("courier new", False, False)[0], Path(fake_system) / "Courier New.ttf")
+            real = pdf_engine.fonts._SYSTEM_FONT_DIR
+            pdf_engine.fonts._SYSTEM_FONT_DIR = Path(fake_system)
+            try:
+                doc, page, block, _blocks = self._scrambled_block()
+                block.lines[0].spans[:] = [Span(**{**sp.__dict__, "font": "font000000003072ff07"}) for sp in block.lines[0].spans]
+                choice = pdf_engine.pick_font(doc, page, block, "Emploi : INGENIEUR environnement")
+            finally:
+                pdf_engine.fonts._SYSTEM_FONT_DIR = real
+        self.assertTrue(choice.fontfile.endswith("Courier New.ttf"), choice.fontfile)
+        self.assertFalse(choice.same_typeface)
+
+
 class Type3WeightMatchingTests(unittest.TestCase):
     """A Type3 font (glyphs are arbitrary vector-drawing programs) has no
     OS/2/name table, so PyMuPDF's `flags` always reports 0 -- indistinguishable

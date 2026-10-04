@@ -113,7 +113,7 @@ export const en: Dictionary = {
       },
       {
         q: "Are there any limits?",
-        a: "A few. PDFs up to 20 MB, without a password. Editing works line by line: a three-line address takes three clicks. And a colored background behind the edited text is erased along with it.",
+        a: "A few. PDFs up to 20 MB, without a password. Editing works line by line: a three-line address takes three clicks. A colored background behind the edited text is erased along with it. And some PDFs, payslips for instance, protect their text: you can still edit a line, but you have to retype it in full.",
       },
       { q: "Do I need an account?", a: "No, you can use the editor right away." },
     ],
@@ -163,6 +163,8 @@ export const en: Dictionary = {
     cancel: "Cancel",
     confirm: "Confirm",
     signatureAlt: "Signature",
+    unreadableText: "This line's original text can't be read: this PDF protects or scrambles it. Retype the whole line.",
+    unreadablePlaceholder: "Retype the line…",
   },
   signatureModal: {
     title: "Add a signature",

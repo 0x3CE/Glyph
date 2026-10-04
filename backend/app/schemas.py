@@ -20,6 +20,9 @@ class BlockOut(BaseModel):
     bbox: tuple[float, float, float, float]
     lines: list[LineOut]
     text: str
+    # False: the PDF hides its real text (scrambled/missing character map);
+    # `text` is then meaningless and the line must be retyped in full.
+    text_reliable: bool = True
 
 
 class PageStructure(BaseModel):

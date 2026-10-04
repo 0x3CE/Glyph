@@ -172,7 +172,9 @@ export function PdfPage({
         width: (x1 - x0) * scale,
         height: (y1 - y0) * scale,
       },
-      draft: block.text,
+      // An unreadable text layer would put garbage in the field (and the
+      // user would edit around it): start empty instead, see text_reliable.
+      draft: block.text_reliable !== false ? block.text : "",
       saving: false,
     });
   };
@@ -181,7 +183,9 @@ export function PdfPage({
 
   const commitEdit = async () => {
     if (!editing) return;
-    if (editing.draft === editing.block.text) {
+    // Nothing changed -- or an unreadable line left empty, which would just
+    // erase it.
+    if (editing.draft === editing.block.text || (editing.block.text_reliable === false && !editing.draft.trim())) {
       setEditing(null);
       return;
     }
@@ -259,37 +263,41 @@ export function PdfPage({
                 const boxWidth = Math.max(editing.rect.width, 140) + 8;
                 const boxHeight = Math.max(editing.rect.height, 24) + 8;
                 return (
-                  <div className="block-editor-field" style={{ width: boxWidth, height: boxHeight }}>
-                    <textarea
-                      autoFocus
-                      className="block-editor-textarea"
-                      style={{
-                        width: boxWidth / k,
-                        height: boxHeight / k,
-                        fontSize: fontPx / k,
-                        lineHeight: `${((fontPx * 1.25) / k).toFixed(1)}px`,
-                        padding: 3 / k,
-                        borderWidth: 1.5 / k,
-                        transform: k < 1 ? `scale(${k})` : undefined,
-                        transformOrigin: "top left",
-                        fontFamily: fontFamilyForFlags(span.flags),
-                        fontWeight: span.flags & FLAG_BOLD ? "bold" : "normal",
-                        fontStyle: span.flags & FLAG_ITALIC ? "italic" : "normal",
-                        // Always readable in the editor regardless of the
-                        // original text color (e.g. white text on a colored PDF
-                        // background would be invisible on the textarea's white
-                        // background otherwise) -- purely a UI choice, the
-                        // backend still reinserts the ORIGINAL color untouched.
-                        color: "#111111",
-                      }}
-                      value={editing.draft}
-                      disabled={editing.saving}
-                      onChange={(e) => setEditing((prev) => (prev ? { ...prev, draft: e.target.value } : prev))}
-                      onKeyDown={(e) => {
-                        if (e.key === "Escape") cancelEdit();
-                      }}
-                    />
-                  </div>
+                  <>
+                    {editing.block.text_reliable === false && <p className="block-editor-hint">{t.editor.unreadableText}</p>}
+                    <div className="block-editor-field" style={{ width: boxWidth, height: boxHeight }}>
+                      <textarea
+                        autoFocus
+                        className="block-editor-textarea"
+                        style={{
+                          width: boxWidth / k,
+                          height: boxHeight / k,
+                          fontSize: fontPx / k,
+                          lineHeight: `${((fontPx * 1.25) / k).toFixed(1)}px`,
+                          padding: 3 / k,
+                          borderWidth: 1.5 / k,
+                          transform: k < 1 ? `scale(${k})` : undefined,
+                          transformOrigin: "top left",
+                          fontFamily: fontFamilyForFlags(span.flags),
+                          fontWeight: span.flags & FLAG_BOLD ? "bold" : "normal",
+                          fontStyle: span.flags & FLAG_ITALIC ? "italic" : "normal",
+                          // Always readable in the editor regardless of the
+                          // original text color (e.g. white text on a colored PDF
+                          // background would be invisible on the textarea's white
+                          // background otherwise) -- purely a UI choice, the
+                          // backend still reinserts the ORIGINAL color untouched.
+                          color: "#111111",
+                        }}
+                        value={editing.draft}
+                        placeholder={editing.block.text_reliable === false ? t.editor.unreadablePlaceholder : undefined}
+                        disabled={editing.saving}
+                        onChange={(e) => setEditing((prev) => (prev ? { ...prev, draft: e.target.value } : prev))}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") cancelEdit();
+                        }}
+                      />
+                    </div>
+                  </>
                 );
               })()}
               <div className="block-editor-controls">

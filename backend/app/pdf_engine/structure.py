@@ -25,7 +25,9 @@ def extract_structure(page: pymupdf.Page) -> list[Block]:
     or more (verified empirically), well below anything meant to look like
     deliberate separate fields (e.g. a form's "Label :        VALUE").
     """
-    raw = page.get_text("dict")
+    # rawdict: same blocks/lines/spans as "dict", plus per-character
+    # positions (used to detect fixed-width fonts, see types._is_monospaced).
+    raw = page.get_text("rawdict")
     blocks: list[Block] = []
     for i, b in enumerate(raw["blocks"]):
         if b.get("type") != 0:

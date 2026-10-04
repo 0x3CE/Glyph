@@ -251,10 +251,15 @@ def pick_font(doc: pymupdf.Document, page: pymupdf.Page, block: Block, new_text:
     bold = bool(span.flags & FLAG_BOLD)
     italic = bool(span.flags & FLAG_ITALIC)
 
-    def from_family(family: str, *, system: bool = True) -> FontChoice | None:
+    def from_family(family: str, *, system: bool = True, named: bool = False) -> FontChoice | None:
         found = _family_font(family, bold, italic, system=system)
         if found and _font_covers_text(found[0], new_text):
-            return FontChoice(fontname=f"f{unique}", fontfile=found[0], substituted=True, same_typeface=found[1])
+            # Only a family matched by the original's own name can be "the
+            # same typeface"; a generic pick (Courier New for an unnamed
+            # fixed-width font) is a substitution even when it's a real
+            # system file.
+            same = found[1] and named
+            return FontChoice(fontname=f"f{unique}", fontfile=found[0], substituted=True, same_typeface=same)
         return None
 
     # Prefer the original family matched by name (see `font_catalog`):
@@ -262,7 +267,7 @@ def pick_font(doc: pymupdf.Document, page: pymupdf.Page, block: Block, new_text:
     # metric-compatible free clone (Calibri -> Carlito). Real font files
     # also cover characters (Euro, accents, ...) Base-14 doesn't.
     named_family = _family_for_original(span.font)
-    if named_family and (choice := from_family(named_family)):
+    if named_family and (choice := from_family(named_family, named=True)):
         return choice
 
     category = _category_for(named_family, span.flags)
@@ -325,7 +330,15 @@ def _metric_match_scale(span: Span, font_choice: FontChoice) -> float:
     original_width = span.bbox[2] - span.bbox[0]
     if original_width <= 0 or not span.text.strip():
         return 1.0
-    substitute_width = _measure(span.text, font_choice, span.size)
+    text = span.text
+    if any((ord(c) < 32 and c not in "\t\n") or c == "\ufffd" for c in text):
+        # Unreadable text layer (Block.text_reliable): the characters are
+        # wrong but there is still one per drawn glyph, so a stand-in of the
+        # same length measures the same width -- exactly for a fixed-width
+        # font, roughly otherwise. Measuring the garbage itself (control
+        # characters with no width) stretched a retyped payslip line by ~40 %.
+        text = "n" * len(text)
+    substitute_width = _measure(text, font_choice, span.size)
     if substitute_width <= 0:
         return 1.0
     scale = original_width / substitute_width

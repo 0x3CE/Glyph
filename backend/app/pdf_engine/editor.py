@@ -50,7 +50,10 @@ def apply_block_edit(
     # never touched it).
     cleanup_choices = [fallback_font]
     resolved: list[tuple[str, FontChoice, tuple[float, float, float], float]] = []
-    for text, source_span, verified in _build_formatted_segments(block, new_text):
+    # An unreadable text layer (see Block.text_reliable) can't be diffed
+    # against: the user retyped the whole line, so it is all new text.
+    segments = _build_formatted_segments(block, new_text) if block.text_reliable else [(new_text, None, False)]
+    for text, source_span, verified in segments:
         if source_span is not None:
             reused = _extract_span_font(doc, page, source_span)
             if reused is not None:

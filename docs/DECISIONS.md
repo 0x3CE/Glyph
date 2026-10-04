@@ -336,3 +336,20 @@ Valeurs par défaut pensées pour une instance de 512 Mo à 1 Go : 2 × 512 Mo d
 - **Barre du haut compacte** sous 720 px : libellés courts (`only-wide` / `only-narrow`), téléchargement en icône ; `100dvh` au lieu de `100vh`, qui sur iPhone incluait la zone sous la barre d'adresse ; messages en bas d'écran ; poignée de redimensionnement de la signature à 28 px sur écran tactile (`pointer: coarse`).
 
 **Limite** : la simulation tourne sur le moteur de Chrome. Le zoom d'iOS, la limite des canvas et `dvh` relèvent de Safari et restent à vérifier sur un vrai iPhone.
+
+## PDF dont le texte est illisible : retaper la ligne, pas la deviner
+
+**Signalé par l'utilisateur sur une vraie fiche de paie** : la ligne « Emploi : INGENIEUR SYSTEME » modifiée devenait « environnement » seul, dans une autre police, et « Emploi » et « : » disparaissaient.
+
+**Cause** : ce PDF n'a pas de texte lisible par la machine. Ses polices (sous-ensembles « Identity-H ») n'ont ni table de caractères ni noms de glyphes (`glyph00001`…), et la table `ToUnicode` du PDF est volontairement brouillée, une substitution lettre à lettre (« Emploi » devient « 6T:SVR », les espaces deviennent U+0001). La page s'affiche normalement, mais le champ d'édition affichait ce charabia. L'utilisateur a tapé par-dessus et a effacé sans le savoir le libellé de la ligne. Aucune récupération n'est possible sans reconnaissance optique (OCR).
+
+Second défaut révélé par ce fichier : ses quatre polices portent toutes le même nom brouillé et sont toutes marquées « serif », alors que deux sont proportionnelles et deux à chasse fixe (type Courier). Le nom et les drapeaux ne permettaient donc pas de choisir une police de remplacement adaptée.
+
+**Ce qu'on fait** :
+- `Block.text_reliable` vaut `False` dès que le texte extrait contient des caractères de contrôle ou U+FFFD. L'API le transmet ; l'éditeur ouvre alors le champ **vide**, avec une explication au-dessus, sans décaler le champ hors de la ligne. Laisser ce champ vide annule l'édition au lieu d'effacer la ligne ;
+- côté moteur, une ligne illisible n'est pas comparée au texte d'origine (pas de « portions inchangées » à préserver) : elle est réécrite en entier ;
+- la chasse fixe est **mesurée sur la page** (`types._is_monospaced`, à partir des positions des caractères fournies par `rawdict`) : si chaque caractère avance de la même distance, le drapeau « monospace » est ajouté, quoi que disent le nom ou le descripteur de la police ;
+- la compensation de largeur mesure, à la place du charabia (des caractères de contrôle sans largeur, qui étiraient la ligne d'environ 40 %), une chaîne de même longueur : il y a un caractère par glyphe dessiné, donc la largeur est exacte en chasse fixe ;
+- une police générique (Courier New pour une police inconnue à chasse fixe) n'est jamais considérée comme « la police d'origine », même si c'est un vrai fichier système : l'avertissement de substitution s'affiche.
+
+**Testé sur le fichier réel** : la ligne retapée « Emploi : INGENIEUR environnement » s'aligne sur « Niveau » et « Emploi type », dans une police de même chasse.
