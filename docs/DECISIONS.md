@@ -324,3 +324,15 @@ Valeurs par défaut pensées pour une instance de 512 Mo à 1 Go : 2 × 512 Mo d
 - le bouton de langue est masqué dans l'éditeur dès qu'un document est ouvert, puisque changer de page déclenche `pagehide`, qui supprime le document.
 
 **Limite assumée** : hors de Vercel (en local, ou sur un autre hébergeur), l'en-tête pays n'existe pas et tout le monde reçoit le français jusqu'au clic sur le bouton. L'en-tête `Accept-Language` du navigateur n'est pas utilisé, conformément à la demande (le pays, pas la langue du navigateur).
+
+## L'éditeur sur mobile
+
+**Constaté en simulant un iPhone 13 (390 px)** : la barre du haut faisait 529 px et poussait le bouton Télécharger hors de l'écran. La page PDF était dessinée à une échelle fixe (×1,5, soit 893 px pour un A4), d'où un défilement horizontal permanent. À la densité de pixels d'un iPhone (×3), ce dessin pesait environ 10 millions de pixels, près de la limite au-delà de laquelle Safari laisse un canvas vide (environ 16,7 millions).
+
+**Ce qu'on fait** :
+- **Ajustement à la largeur** (`PdfPage`, `availableWidth`) : la page prend la largeur disponible, plafonnée à ×1,5 (l'ancienne taille sur ordinateur, inchangée). Les boutons − / + multiplient cette échelle (100 à 300 %). La largeur est mesurée par un `ResizeObserver`, qui ignore les variations de moins de 16 px pour ne pas boucler quand une barre de défilement apparaît.
+- **Taille du dessin plafonnée** à 12 millions de pixels (`MAX_CANVAS_PIXELS`) : au-delà, c'est la densité de pixels qui baisse, pas la taille affichée.
+- **Champ d'édition à 16 px minimum** : iOS zoome toute la page dès qu'un champ de saisie a un texte plus petit, et reste zoomé après. Sous ce seuil, le champ est construit à 16 px puis réduit visuellement par une transformation CSS : même apparence, plus de zoom.
+- **Barre du haut compacte** sous 720 px : libellés courts (`only-wide` / `only-narrow`), téléchargement en icône ; `100dvh` au lieu de `100vh`, qui sur iPhone incluait la zone sous la barre d'adresse ; messages en bas d'écran ; poignée de redimensionnement de la signature à 28 px sur écran tactile (`pointer: coarse`).
+
+**Limite** : la simulation tourne sur le moteur de Chrome. Le zoom d'iOS, la limite des canvas et `dvh` relèvent de Safari et restent à vérifier sur un vrai iPhone.

@@ -12,7 +12,8 @@ import { localePath } from "@/lib/i18n";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { deleteDocument, documentDownloadUrl, redo, undo, uploadDocument } from "@/lib/api-client";
 
-const SCALE = 1.5;
+// Multipliers on top of fit-to-width (1 = the page fills the available width).
+const ZOOM_STEPS = [1, 1.5, 2, 3];
 
 export function EditorApp() {
   const { locale, t } = useI18n();
@@ -30,6 +31,28 @@ export function EditorApp() {
   const [isDragging, setIsDragging] = useState(false);
   const [showSignatureModal, setShowSignatureModal] = useState(false);
   const [pendingSignature, setPendingSignature] = useState<PendingSignature | null>(null);
+  const [zoom, setZoom] = useState(1);
+
+  // Width the page can take inside the scrollable area, so it fits a phone
+  // screen instead of being drawn at a fixed desktop size. Small changes
+  // (a scrollbar appearing) are ignored so they can't trigger re-renders in
+  // a loop.
+  const [availableWidth, setAvailableWidth] = useState(0);
+  const canvasAreaRef = useRef<HTMLDivElement | null>(null);
+  const observerRef = useRef<ResizeObserver | null>(null);
+  const measureCanvasArea = useCallback((node: HTMLDivElement | null) => {
+    observerRef.current?.disconnect();
+    canvasAreaRef.current = node;
+    if (!node) return;
+    const update = () => {
+      const style = getComputedStyle(node);
+      const width = node.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      setAvailableWidth((prev) => (Math.abs(prev - width) > 16 ? width : prev));
+    };
+    update();
+    observerRef.current = new ResizeObserver(update);
+    observerRef.current.observe(node);
+  }, []);
 
   // The server keeps each document in memory until it expires: free it as
   // soon as it's no longer reachable from this tab (another PDF opened, tab
@@ -55,6 +78,7 @@ export function EditorApp() {
       setDocumentId(res.document_id);
       setPageCount(res.page_count);
       setPageNumber(1);
+      setZoom(1);
       setVersion((v) => v + 1);
       setEditCount(0);
       setCanUndo(false);
@@ -122,7 +146,7 @@ export function EditorApp() {
           <span className="brand-mark">
             <BrandMark />
           </span>
-          <span className="brand-name">Glyph</span>
+          <span className="brand-name only-wide">Glyph</span>
         </Link>
 
         <div className="topbar-actions">
@@ -139,7 +163,8 @@ export function EditorApp() {
             />
           )}
           <label className="btn btn-ghost">
-            {fileName ? t.editor.changeFile : t.editor.openPdf}
+            <span className="only-wide">{fileName ? t.editor.changeFile : t.editor.openPdf}</span>
+            <span className="only-narrow">{t.editor.openShort}</span>
             <input
               type="file"
               accept="application/pdf"
@@ -163,14 +188,19 @@ export function EditorApp() {
                 onClick={() => setShowSignatureModal(true)}
                 disabled={!!pendingSignature}
               >
-                {t.editor.signature}
+                <span className="only-wide">{t.editor.signature}</span>
+                <span className="only-narrow">{t.editor.signatureShort}</span>
               </button>
               <a
                 className="btn btn-accent"
                 href={documentDownloadUrl(documentId)}
                 download={fileName ? t.editor.downloadName(fileName) : t.editor.defaultDownloadName}
+                aria-label={t.editor.download}
               >
-                {t.editor.download}
+                <span className="only-wide">{t.editor.download}</span>
+                <span className="only-narrow" aria-hidden="true">
+                  ↓
+                </span>
                 {editCount ? <span className="btn-badge">{editCount}</span> : null}
               </a>
             </>
@@ -253,14 +283,35 @@ export function EditorApp() {
               >
                 →
               </button>
+              <span className="page-toolbar-sep" aria-hidden="true" />
+              <button
+                className="btn btn-icon"
+                disabled={zoom <= ZOOM_STEPS[0]}
+                onClick={() => setZoom((z) => ZOOM_STEPS[Math.max(0, ZOOM_STEPS.indexOf(z) - 1)])}
+                title={t.editor.zoomOut}
+                aria-label={t.editor.zoomOut}
+              >
+                −
+              </button>
+              <span className="page-indicator">{Math.round(zoom * 100)} %</span>
+              <button
+                className="btn btn-icon"
+                disabled={zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1]}
+                onClick={() => setZoom((z) => ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, ZOOM_STEPS.indexOf(z) + 1)])}
+                title={t.editor.zoomIn}
+                aria-label={t.editor.zoomIn}
+              >
+                +
+              </button>
             </div>
 
-            <div className="page-canvas">
+            <div className="page-canvas" ref={measureCanvasArea}>
               <PdfPage
                 documentId={documentId}
                 pageIndex={pageNumber - 1}
                 version={version}
-                scale={SCALE}
+                availableWidth={availableWidth}
+                zoom={zoom}
                 onEdited={handleEdited}
                 pendingSignature={pendingSignature}
                 onSignaturePlaced={handleSignaturePlaced}

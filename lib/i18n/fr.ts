@@ -142,6 +142,11 @@ export const fr = {
   editor: {
     openPdf: "Ouvrir un PDF",
     changeFile: "Changer de fichier",
+    // Short labels for narrow screens.
+    openShort: "Ouvrir",
+    signatureShort: "Signer",
+    zoomIn: "Zoomer",
+    zoomOut: "Dézoomer",
     undo: "Annuler",
     redo: "Rétablir",
     signature: "Signature",

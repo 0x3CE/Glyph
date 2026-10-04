@@ -10,6 +10,16 @@ import { FLAG_BOLD, FLAG_ITALIC, fontFamilyForFlags } from "../lib/types";
 import { SignaturePlacer } from "./SignaturePlacer";
 import { useI18n } from "../lib/i18n/I18nProvider";
 
+// Fit-to-width never goes above this (the size the desktop editor always used).
+const MAX_FIT_SCALE = 1.5;
+// iOS Safari refuses to draw a canvas over ~16.7M pixels (it stays blank); a
+// phone's 3x pixel density on a large page gets there quickly. Below this,
+// the pixel density is lowered instead.
+const MAX_CANVAS_PIXELS = 12_000_000;
+// iOS Safari zooms the whole page into any text field under 16px, and stays
+// zoomed after the edit.
+const MIN_FIELD_FONT_PX = 16;
+
 export interface PendingSignature {
   blob: Blob;
   aspectRatio: number;
@@ -19,7 +29,10 @@ interface PdfPageProps {
   documentId: string;
   pageIndex: number;
   version: number;
-  scale: number;
+  /** Width (CSS px) the page can take: the page is fit to it, then zoomed. */
+  availableWidth: number;
+  /** 1 = fit to width; higher values zoom in. */
+  zoom: number;
   onEdited: (fontSubstituted: boolean) => void;
   pendingSignature: PendingSignature | null;
   onSignaturePlaced: () => void;
@@ -37,7 +50,8 @@ export function PdfPage({
   documentId,
   pageIndex,
   version,
-  scale,
+  availableWidth,
+  zoom,
   onEdited,
   pendingSignature,
   onSignaturePlaced,
@@ -51,6 +65,9 @@ export function PdfPage({
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [loading, setLoading] = useState(true);
   const [signatureSaving, setSignatureSaving] = useState(false);
+  // CSS px per PDF point of the page as last rendered: positions the
+  // clickable areas, the edit field and the signature box over the canvas.
+  const [scale, setScale] = useState(1);
 
   // The PDF itself only changes with `version` (an edit, undo/redo, a
   // signature): turning the page reuses the document already downloaded and
@@ -101,12 +118,18 @@ export function PdfPage({
       const page: PDFPageProxy = await pdf.getPage(pageIndex + 1);
       if (cancelled) return;
 
-      const viewport = page.getViewport({ scale });
+      const natural = page.getViewport({ scale: 1 });
+      const fit = availableWidth > 0 ? Math.min(MAX_FIT_SCALE, availableWidth / natural.width) : MAX_FIT_SCALE;
+      const renderScale = fit * zoom;
+      const viewport = page.getViewport({ scale: renderScale });
       const canvas = canvasRef.current;
       const container = containerRef.current;
       if (!canvas || !container) return;
 
-      const outputScale = window.devicePixelRatio || 1;
+      const outputScale = Math.min(
+        window.devicePixelRatio || 1,
+        Math.sqrt(MAX_CANVAS_PIXELS / (viewport.width * viewport.height)),
+      );
       canvas.width = Math.floor(viewport.width * outputScale);
       canvas.height = Math.floor(viewport.height * outputScale);
       canvas.style.width = `${viewport.width}px`;
@@ -126,6 +149,7 @@ export function PdfPage({
       }
       if (cancelled) return;
 
+      setScale(renderScale);
       setPageSize({ width: structure.width, height: structure.height });
       setBlocks(structure.blocks);
       setLoading(false);
@@ -135,7 +159,7 @@ export function PdfPage({
     return () => {
       cancelled = true;
     };
-  }, [documentId, pageIndex, version, scale]);
+  }, [documentId, pageIndex, version, availableWidth, zoom]);
 
   const startEdit = (block: Block) => {
     if (!pageSize || pendingSignature) return;
@@ -226,31 +250,48 @@ export function PdfPage({
           const span = dominantSpan(editing.block);
           return (
             <div className="block-editor" style={{ left: editing.rect.left - 4, top: editing.rect.top - 4 }}>
-              <textarea
-                autoFocus
-                className="block-editor-textarea"
-                style={{
-                  width: Math.max(editing.rect.width, 140) + 8,
-                  height: Math.max(editing.rect.height, 24) + 8,
-                  fontSize: span.size * scale,
-                  lineHeight: `${(span.size * scale * 1.25).toFixed(1)}px`,
-                  fontFamily: fontFamilyForFlags(span.flags),
-                  fontWeight: span.flags & FLAG_BOLD ? "bold" : "normal",
-                  fontStyle: span.flags & FLAG_ITALIC ? "italic" : "normal",
-                  // Always readable in the editor regardless of the
-                  // original text color (e.g. white text on a colored PDF
-                  // background would be invisible on the textarea's white
-                  // background otherwise) -- purely a UI choice, the
-                  // backend still reinserts the ORIGINAL color untouched.
-                  color: "#111111",
-                }}
-                value={editing.draft}
-                disabled={editing.saving}
-                onChange={(e) => setEditing((prev) => (prev ? { ...prev, draft: e.target.value } : prev))}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") cancelEdit();
-                }}
-              />
+              {(() => {
+                // Under MIN_FIELD_FONT_PX, the field is laid out at that size
+                // and shrunk back visually with a transform: same look, but
+                // iOS no longer zooms in when it gets focus.
+                const fontPx = span.size * scale;
+                const k = Math.min(1, fontPx / MIN_FIELD_FONT_PX);
+                const boxWidth = Math.max(editing.rect.width, 140) + 8;
+                const boxHeight = Math.max(editing.rect.height, 24) + 8;
+                return (
+                  <div className="block-editor-field" style={{ width: boxWidth, height: boxHeight }}>
+                    <textarea
+                      autoFocus
+                      className="block-editor-textarea"
+                      style={{
+                        width: boxWidth / k,
+                        height: boxHeight / k,
+                        fontSize: fontPx / k,
+                        lineHeight: `${((fontPx * 1.25) / k).toFixed(1)}px`,
+                        padding: 3 / k,
+                        borderWidth: 1.5 / k,
+                        transform: k < 1 ? `scale(${k})` : undefined,
+                        transformOrigin: "top left",
+                        fontFamily: fontFamilyForFlags(span.flags),
+                        fontWeight: span.flags & FLAG_BOLD ? "bold" : "normal",
+                        fontStyle: span.flags & FLAG_ITALIC ? "italic" : "normal",
+                        // Always readable in the editor regardless of the
+                        // original text color (e.g. white text on a colored PDF
+                        // background would be invisible on the textarea's white
+                        // background otherwise) -- purely a UI choice, the
+                        // backend still reinserts the ORIGINAL color untouched.
+                        color: "#111111",
+                      }}
+                      value={editing.draft}
+                      disabled={editing.saving}
+                      onChange={(e) => setEditing((prev) => (prev ? { ...prev, draft: e.target.value } : prev))}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") cancelEdit();
+                      }}
+                    />
+                  </div>
+                );
+              })()}
               <div className="block-editor-controls">
                 <button className="btn btn-accent" onClick={commitEdit} disabled={editing.saving}>
                   {editing.saving ? t.editor.saving : t.editor.save}
@@ -264,6 +305,8 @@ export function PdfPage({
         })()}
       {pendingSignature && pageSize && (
         <SignaturePlacer
+          // Its box lives in screen pixels: start over if the zoom changes.
+          key={scale}
           blob={pendingSignature.blob}
           pageWidth={pageSize.width}
           pageHeight={pageSize.height}

@@ -42,6 +42,9 @@ a {
 
 .editor-shell {
   height: 100vh;
+  /* The visible height on phones: 100vh includes the area under Safari's
+     address bar, which hid the bottom of the editor. */
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -380,6 +383,10 @@ a {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.block-editor-field {
+  position: relative;
 }
 
 .block-editor-textarea {
@@ -965,4 +972,61 @@ a {
 .not-found p {
   margin: 0 0 12px;
   color: var(--ink-dim);
+}
+
+/* ---------- Editor on narrow screens / touch ---------- */
+
+.only-narrow {
+  display: none;
+}
+
+.page-toolbar-sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--border-strong);
+}
+
+@media (max-width: 720px) {
+  .only-wide {
+    display: none;
+  }
+  .only-narrow {
+    display: inline;
+  }
+  .topbar {
+    padding: 0 10px;
+  }
+  .topbar-actions {
+    gap: 6px;
+  }
+  .topbar .btn {
+    padding: 0 10px;
+  }
+  .topbar .btn-icon {
+    padding: 0;
+  }
+  .page-canvas {
+    padding: 12px;
+  }
+  .page-toolbar {
+    gap: 6px;
+  }
+  .toast-stack {
+    top: auto;
+    bottom: 16px;
+    left: 12px;
+    right: 12px;
+    max-width: none;
+  }
+}
+
+/* A finger needs a bigger target than a mouse to resize the signature box. */
+@media (pointer: coarse) {
+  .signature-placer-handle {
+    width: 28px;
+    height: 28px;
+    right: -14px;
+    bottom: -14px;
+  }
 }

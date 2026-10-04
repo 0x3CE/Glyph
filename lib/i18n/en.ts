@@ -139,6 +139,10 @@ export const en: Dictionary = {
   editor: {
     openPdf: "Open a PDF",
     changeFile: "Change file",
+    openShort: "Open",
+    signatureShort: "Sign",
+    zoomIn: "Zoom in",
+    zoomOut: "Zoom out",
     undo: "Undo",
     redo: "Redo",
     signature: "Signature",
