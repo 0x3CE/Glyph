@@ -6,6 +6,7 @@ import Link from "next/link";
 import { PdfPage } from "@/components/PdfPage";
 import type { PendingSignature } from "@/components/PdfPage";
 import { SignatureModal } from "@/components/SignatureModal";
+import { MAX_ZOOM, MIN_ZOOM, usePinchZoom } from "@/components/usePinchZoom";
 import { BrandMark } from "@/components/BrandMark";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { localePath } from "@/lib/i18n";
@@ -13,7 +14,10 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { deleteDocument, documentDownloadUrl, redo, undo, uploadDocument } from "@/lib/api-client";
 
 // Multipliers on top of fit-to-width (1 = the page fills the available width).
-const ZOOM_STEPS = [1, 1.5, 2, 3];
+// The − / + buttons jump between these; a pinch can land anywhere in between.
+const ZOOM_STEPS = [MIN_ZOOM, 0.75, 1, 1.5, 2, 3, MAX_ZOOM];
+const zoomOutStep = (z: number) => [...ZOOM_STEPS].reverse().find((s) => s < z - 0.01) ?? MIN_ZOOM;
+const zoomInStep = (z: number) => ZOOM_STEPS.find((s) => s > z + 0.01) ?? MAX_ZOOM;
 
 export function EditorApp() {
   const { locale, t } = useI18n();
@@ -53,6 +57,7 @@ export function EditorApp() {
     observerRef.current = new ResizeObserver(update);
     observerRef.current.observe(node);
   }, []);
+  const { afterRender } = usePinchZoom(canvasAreaRef, zoom, setZoom, !!documentId);
 
   // The server keeps each document in memory until it expires: free it as
   // soon as it's no longer reachable from this tab (another PDF opened, tab
@@ -286,8 +291,8 @@ export function EditorApp() {
               <span className="page-toolbar-sep" aria-hidden="true" />
               <button
                 className="btn btn-icon"
-                disabled={zoom <= ZOOM_STEPS[0]}
-                onClick={() => setZoom((z) => ZOOM_STEPS[Math.max(0, ZOOM_STEPS.indexOf(z) - 1)])}
+                disabled={zoom <= MIN_ZOOM}
+                onClick={() => setZoom(zoomOutStep)}
                 title={t.editor.zoomOut}
                 aria-label={t.editor.zoomOut}
               >
@@ -296,8 +301,8 @@ export function EditorApp() {
               <span className="page-indicator">{Math.round(zoom * 100)} %</span>
               <button
                 className="btn btn-icon"
-                disabled={zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1]}
-                onClick={() => setZoom((z) => ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, ZOOM_STEPS.indexOf(z) + 1)])}
+                disabled={zoom >= MAX_ZOOM}
+                onClick={() => setZoom(zoomInStep)}
                 title={t.editor.zoomIn}
                 aria-label={t.editor.zoomIn}
               >
@@ -312,6 +317,7 @@ export function EditorApp() {
                 version={version}
                 availableWidth={availableWidth}
                 zoom={zoom}
+                onRendered={afterRender}
                 onEdited={handleEdited}
                 pendingSignature={pendingSignature}
                 onSignaturePlaced={handleSignaturePlaced}

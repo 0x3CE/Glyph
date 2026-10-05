@@ -33,6 +33,9 @@ interface PdfPageProps {
   availableWidth: number;
   /** 1 = fit to width; higher values zoom in. */
   zoom: number;
+  /** Called once a new rendering is on screen (canvas, page box and
+   * clickable areas all at the new scale). */
+  onRendered?: () => void;
   onEdited: (fontSubstituted: boolean) => void;
   pendingSignature: PendingSignature | null;
   onSignaturePlaced: () => void;
@@ -52,6 +55,7 @@ export function PdfPage({
   version,
   availableWidth,
   zoom,
+  onRendered,
   onEdited,
   pendingSignature,
   onSignaturePlaced,
@@ -122,32 +126,41 @@ export function PdfPage({
       const fit = availableWidth > 0 ? Math.min(MAX_FIT_SCALE, availableWidth / natural.width) : MAX_FIT_SCALE;
       const renderScale = fit * zoom;
       const viewport = page.getViewport({ scale: renderScale });
-      const canvas = canvasRef.current;
-      const container = containerRef.current;
-      if (!canvas || !container) return;
-
       const outputScale = Math.min(
         window.devicePixelRatio || 1,
         Math.sqrt(MAX_CANVAS_PIXELS / (viewport.width * viewport.height)),
       );
-      canvas.width = Math.floor(viewport.width * outputScale);
-      canvas.height = Math.floor(viewport.height * outputScale);
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
-      container.style.width = `${viewport.width}px`;
-      container.style.height = `${viewport.height}px`;
 
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
+      // Render off screen, then swap it in at once: the page on screen keeps
+      // its previous rendering (and size) until the new one is complete --
+      // no blank flash while it draws, and a pinch-zoom preview (a CSS
+      // transform on the page) is replaced in a single frame.
+      const offscreen = document.createElement("canvas");
+      offscreen.width = Math.floor(viewport.width * outputScale);
+      offscreen.height = Math.floor(viewport.height * outputScale);
       const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined;
-      const renderTask = page.render({ canvas, viewport, transform });
+      const renderTask = page.render({ canvas: offscreen, viewport, transform });
       try {
         await renderTask.promise;
       } catch (err) {
         const name = err && typeof err === "object" && "name" in err ? (err as { name?: string }).name : undefined;
         if (name !== "RenderingCancelledException") throw err;
+        return;
       }
       if (cancelled) return;
+
+      const canvas = canvasRef.current;
+      const container = containerRef.current;
+      const ctx = canvas?.getContext("2d");
+      if (!canvas || !container || !ctx) return;
+      canvas.width = offscreen.width;
+      canvas.height = offscreen.height;
+      canvas.style.width = `${viewport.width}px`;
+      canvas.style.height = `${viewport.height}px`;
+      container.style.width = `${viewport.width}px`;
+      container.style.height = `${viewport.height}px`;
+      ctx.drawImage(offscreen, 0, 0);
+      onRendered?.();
 
       setScale(renderScale);
       setPageSize({ width: structure.width, height: structure.height });

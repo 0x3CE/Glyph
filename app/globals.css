@@ -340,6 +340,9 @@ a {
   min-height: 0;
   overflow: auto;
   padding: 32px;
+  /* Scrolling stays native; pinching is handled by usePinchZoom (it zooms
+     the page, not the whole interface). */
+  touch-action: pan-x pan-y;
 }
 
 /* Centered while it fits; once zoomed wider than the screen, auto margins

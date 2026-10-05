@@ -361,3 +361,15 @@ Second défaut révélé par ce fichier : ses quatre polices portent toutes le m
 **Comparaison faite sur le fichier réel** : Courier New (référence), Liberation Mono (trop épaisse), Cutive Mono (traits fins mais dessin de machine à écrire différent, chasse de 0,605 em), Nimbus Mono PS (le clone de Courier publié par URW, même dessin, chasse exacte de 0,600 em, trait à peine plus appuyé). C'est Nimbus Mono PS qui est retenue pour la famille « courier new » (et donc pour toute police inconnue à chasse fixe).
 
 **Secours** : Nimbus Mono PS est téléchargée au build, comme le reste du catalogue. Si elle manque, le nouveau champ `FontFamily.fallback` renvoie vers Liberation Mono, commitée, pour ne jamais retomber sur une police générique.
+
+## Zoom au geste dans la page
+
+**Demandé par l'utilisateur** : zoomer dans le PDF lui-même, au geste, et pas seulement avec les boutons − / +, qui zooment par paliers depuis le haut de la page.
+
+**Ce qu'on fait** (`components/usePinchZoom.ts`) : le pincement à deux doigts, le pincement du trackpad (envoyé comme Ctrl + molette par Chrome, Firefox et Edge, et comme événements `gesture*` propres à Safari) et Ctrl + molette zooment **la page**, entre 50 et 400 %, centrés sous les doigts ou le curseur. Le zoom natif du navigateur, lui, agrandirait toute l'interface ; il est bloqué sur cette zone (`touch-action: pan-x pan-y` et `preventDefault`). La molette seule continue de faire défiler.
+
+- **Pendant le geste**, seule une transformation CSS agrandit la page : c'est instantané.
+- **À la fin du geste**, `PdfPage` redessine la page nettement à la nouvelle échelle. Le rendu se fait **hors écran** puis remplace l'ancien d'un coup (`onRendered`) : la transformation est retirée et le défilement corrigé dans la même image, pour que le point visé reste sous les doigts. Ce rendu hors écran supprime aussi le blanc qui apparaissait pendant chaque redessin (changement de page, édition).
+- Un nouveau geste est ignoré tant que le rendu du précédent n'est pas affiché : la page porte encore sa transformation et la mesurer serait faux.
+
+**Vérifié** par simulation (Ctrl + molette sur ordinateur, vrai pincement à deux doigts sur iPhone 13 via le protocole de débogage de Chrome) : la même ligne reste sous le curseur ou les doigts avant et après le zoom, et elle reste cliquable. Reste à confirmer sur un vrai iPhone et dans Safari sur Mac.
