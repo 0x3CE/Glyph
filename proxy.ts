@@ -51,9 +51,11 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Pages only: not the backend proxy (/api), Next's own assets, files with
-  // an extension (icon.svg, robots.txt, sitemap.xml), or generated images
-  // with no extension -- the Open Graph images (which already carry their
-  // locale in the path) and the apple-touch-icon.
-  matcher: ["/((?!api/|_next/|.*\\..*|.*opengraph-image|apple-icon).*)"],
+  // Pages only: not the backend proxy (/api), Next's own assets, Vercel's
+  // own endpoints (/_vercel: Speed Insights posts its reports there, with no
+  // file extension), files with an extension (icon.svg, robots.txt,
+  // sitemap.xml), or generated images with no extension -- the Open Graph
+  // images (which already carry their locale in the path) and the
+  // apple-touch-icon.
+  matcher: ["/((?!api/|_next/|_vercel/|.*\\..*|.*opengraph-image|apple-icon).*)"],
 };
