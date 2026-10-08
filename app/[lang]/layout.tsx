@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Inter, JetBrains_Mono } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import { LOCALES, getDictionary, hasLocale } from "@/lib/i18n";
 import { localeOpenGraph } from "@/lib/i18n/metadata";
@@ -61,9 +62,10 @@ export default async function RootLayout({ children, params }: Props) {
     <html lang={lang} className={`${inter.variable} ${jetbrainsMono.variable}`}>
       <body>
         {children}
-        {/* Vercel Speed Insights: anonymous page-load performance (Web Vitals),
-            no cookie, no visitor tracking. Its script and its reports live
-            under /_vercel/, which proxy.ts leaves alone. */}
+        {/* Vercel Web Analytics (anonymous page views, no cookie) and Speed
+            Insights (page-load performance, Web Vitals). Their scripts and
+            reports live under /_vercel/, which proxy.ts leaves alone. */}
+        <Analytics />
         <SpeedInsights />
         <script
           type="application/ld+json"

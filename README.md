@@ -2,7 +2,7 @@
 
 Glyph edits text directly inside a PDF's content stream instead of drawing a patch on top of it. When you edit a line, the original glyphs are actually removed (via PDF redaction) and the new text is re-inserted in their place — not covered by a white rectangle with new text stacked over it.
 
-It's a small, focused, open-source tool: no accounts, no ads, no visitor tracking (the hosted site only collects anonymous page-load performance through Vercel Speed Insights). Editing does **not** happen in your browser: the PDF is sent to Glyph's backend server, which processes it in memory only — never written to disk — and deletes it when you close the tab, or after 30 minutes of inactivity. If you self-host, that server is yours.
+It's a small, focused, open-source tool: no accounts, no ads, no visitor tracking (the hosted site only collects anonymous, cookie-free page views and page-load performance through Vercel Web Analytics and Speed Insights). Editing does **not** happen in your browser: the PDF is sent to Glyph's backend server, which processes it in memory only — never written to disk — and deletes it when you close the tab, or after 30 minutes of inactivity. If you self-host, that server is yours.
 
 ## How it works
 

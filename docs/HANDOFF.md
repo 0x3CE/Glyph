@@ -92,7 +92,7 @@ Le processus API ne lit jamais un PDF lui-même : il transmet les octets à un s
 
 | Fichier | Rôle |
 | --- | --- |
-| `proxy.ts` | Choix de la langue : préfixe `/en`, pays à la première visite, cookie. Ne touche pas à `/api`, `/_next` ni `/_vercel` (Speed Insights y envoie ses mesures) |
+| `proxy.ts` | Choix de la langue : préfixe `/en`, pays à la première visite, cookie. Ne touche pas à `/api`, `/_next` ni `/_vercel` (Web Analytics et Speed Insights y envoient leurs mesures) |
 | `lib/i18n/` | Dictionnaires `fr.ts` / `en.ts`, configuration des langues, balises `hreflang` |
 | `app/[lang]/page.tsx` | Landing page, générée en français et en anglais (SEO, FAQ, Buy Me a Coffee) |
 | `app/[lang]/editor/page.tsx` + `components/EditorApp.tsx` | Écran d'édition : upload, pages, undo/redo, signature, téléchargement |

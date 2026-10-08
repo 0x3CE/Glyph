@@ -37,7 +37,7 @@ export const terms: LocalizedContent = {
             p: "Le traitement n'a pas lieu dans ton navigateur : ton PDF est envoyé en HTTPS au serveur de Glyph (hébergé chez Render), traité **en mémoire uniquement**, jamais écrit sur disque, et supprimé à la fermeture de l'onglet ou après 30 minutes d'inactivité. Il n'est ni conservé, ni analysé, ni réutilisé.",
           },
           {
-            p: "Le site (hébergé chez Vercel) mesure de façon anonyme la vitesse de chargement des pages (Vercel Speed Insights), sans cookie ni suivi des visiteurs. Ton choix de langue est retenu dans un cookie de préférence.",
+            p: "Le site (hébergé chez Vercel) compte les pages vues et mesure leur vitesse de chargement de façon anonyme (Vercel Web Analytics et Speed Insights) : sans cookie, sans profil de visiteur, et sans jamais voir le contenu de tes fichiers. Ton choix de langue est retenu dans un cookie de préférence.",
           },
         ],
       },
@@ -91,7 +91,7 @@ export const terms: LocalizedContent = {
             p: "Processing doesn't happen in your browser: your PDF is sent over HTTPS to Glyph's server (hosted by Render), processed **in memory only**, never written to disk, and deleted when you close the tab or after 30 minutes of inactivity. It is not kept, analysed or reused.",
           },
           {
-            p: "The website (hosted by Vercel) anonymously measures page-load speed (Vercel Speed Insights), with no cookie and no visitor tracking. Your language choice is remembered in a preference cookie.",
+            p: "The website (hosted by Vercel) anonymously counts page views and measures page-load speed (Vercel Web Analytics and Speed Insights): no cookie, no visitor profile, and never any access to your files' content. Your language choice is remembered in a preference cookie.",
           },
         ],
       },
