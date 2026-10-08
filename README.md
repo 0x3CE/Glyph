@@ -2,17 +2,23 @@
 
 Glyph edits text directly inside a PDF's content stream instead of drawing a patch on top of it. When you edit a line, the original glyphs are actually removed (via PDF redaction) and the new text is re-inserted in their place — not covered by a white rectangle with new text stacked over it.
 
-It's a small, focused, open-source tool: no accounts, no cloud storage, no tracking. Everything runs locally — your PDF stays in server memory for the duration of your session (deleted when you close the tab, or after 30 minutes of inactivity) and is never written to disk.
+It's a small, focused, open-source tool: no accounts, no ads, no visitor tracking (the hosted site only collects anonymous page-load performance through Vercel Speed Insights). Editing does **not** happen in your browser: the PDF is sent to Glyph's backend server, which processes it in memory only — never written to disk — and deletes it when you close the tab, or after 30 minutes of inactivity. If you self-host, that server is yours.
 
 ## How it works
 
-1. Open a PDF (uploaded to the local backend, kept in memory only).
+1. Open a PDF (uploaded to the backend server, kept in its memory only).
 2. Click a line of text — an editor appears exactly where it is. Editing is always per line, including a field that visually spans several lines (an address, say) — see "Known limitations" below.
 3. Change the text and save.
 4. The backend removes the original glyphs (real redaction, not an overlay) and re-inserts the new text using the original font if it covers all the needed characters, or the same family from Glyph's bundled catalog of ~240 free fonts otherwise (Roboto, Montserrat, Lato, Merriweather…), or a metric-compatible free clone for proprietary fonts (Calibri → Carlito, Arial → Liberation Sans, Arial Narrow → Nimbus Sans Narrow…), with metric compensation (you'll see a warning banner when the result isn't the original typeface). If the line mixes styles (a bold word inside an otherwise plain sentence, say), Glyph diffs your edit against the original and keeps that word's exact original formatting wherever the surrounding edit left it untouched, instead of collapsing the whole line to one font (see `docs/DECISIONS.md`).
 5. Add a signature: draw one on a canvas, or import a file (PDF, PNG, or JPEG), then drag/resize it into place. A PDF signature is embedded as vector (crisp at any zoom); an image is stamped as-is.
-6. Undo/redo walk through the document's version history (kept server-side).
-7. Download the result whenever you like.
+6. Redact: tap lines or draw areas, then apply. Everything under them is deleted from the file (text, image pixels, shapes fully inside), not covered by a black box. "Remove metadata" strips the info dictionary, XMP, attachments, JavaScript, invisible text and thumbnails, and rewrites the whole file.
+7. Find and replace a word across the whole document: each matching line is edited exactly like a manual edit, and the whole replacement is one undo step.
+8. Undo/redo walk through the document's version history (kept server-side).
+9. Download the result whenever you like.
+
+A separate **redacted-PDF checker** (`/verifier-pdf-caviarde`, `/en/check-redacted-pdf`) reports, without storing or changing the file, what a PDF still hides: text covered by a shape or image drawn after it (fake redactions, white-box "edits"), redactions marked but never applied, invisible text, metadata, earlier versions kept by incremental saves, attachments.
+
+Besides the landing page and the editor, the site has a small set of **content pages** (one per tool, a few guides and an article, plus terms of use), each in both languages with its own translated slug. They're plain data in `lib/seo/content/`, registered in `lib/seo/registry.ts`; a page gets a route, a sitemap entry and live internal links only once its content is listed in `lib/seo/content/index.ts`.
 
 The site (landing page and editor) is in **French and English**. French lives at `/` and `/editor`, English at `/en` and `/en/editor`. On a first visit, `proxy.ts` picks the language from the visitor's country (French for France, its overseas territories and Monaco; English everywhere else), using the `x-vercel-ip-country` header Vercel adds — no IP is read or stored. A FR/EN switch in the header overrides that guess and is remembered in a `glyph-lang` cookie. Search engine crawlers are never redirected, so both versions stay indexed (with `hreflang` links between them).
 
@@ -79,12 +85,13 @@ The backend has no database and keeps everything in the web service's own memory
 ## Project structure
 
 ```text
-app/[lang]/     # Next.js routes per language (home page, /editor, OG image, 404)
+app/[lang]/     # Next.js routes per language (home page, /editor, content pages [slug], OG image, 404)
 app/            # sitemap, robots, icon, global styles
 proxy.ts        # language routing: /en prefix, country-based first visit, cookie
-components/     # PdfPage (render + edit), EditorApp (editor screen), LanguageSwitcher, BrandMark
+components/     # PdfPage (render + edit + redaction), EditorApp (editor screen), SeoPage (content pages), PdfChecker, ReplaceModal…
 lib/            # API client, shared types, pdf.js setup
 lib/i18n/       # fr.ts / en.ts dictionaries, locale config, hreflang helpers
+lib/seo/        # content pages: registry (ids, kinds, slugs per language) and content
 backend/        # FastAPI + PyMuPDF (the actual editing engine)
   app/fonts/    # bundled free fonts (only Liberation + Open Sans are committed)
   scripts/      # fetch_fonts.py: downloads the rest of the font catalog
@@ -117,7 +124,9 @@ backend/        # FastAPI + PyMuPDF (the actual editing engine)
 - **Block overflow**: if you type a manual line break into a field, growing it to more lines than it originally had, it grows downward — but only up to the nearest sibling below, never past it; a field one line tall never grows at all (its font size is reduced instead if the new text is too wide). Editing a block is also clamped against its immediate neighbors on all four sides, so it can never bleed into a sibling's territory even when their bounding boxes already overlap slightly in the source PDF (common with tight line leading or tightly-packed table columns — see `docs/DECISIONS.md`).
 - **Colored backgrounds**: redaction clears everything in the edited area, including any vector fill behind the text. Not an issue for typical text blocks (names, dates, paragraphs), but worth knowing if you're editing colored table cells.
 - **Password-protected PDFs** are rejected at upload with a clear error — not supported.
-- No advanced text shaping (HarfBuzz), no RTL/CJK support, no page rotation — out of scope for now. Signatures, form fields, shapes, and OCR aren't implemented yet.
+- No advanced text shaping (HarfBuzz), no RTL/CJK support, no page rotation — out of scope for now. Free text, form fields, shapes, and OCR aren't implemented yet.
+- **Find and replace** works line by line too: a phrase broken across two lines isn't found, and lines with an unreadable text layer are skipped. One run edits at most 300 lines (60 per page, each page in its own sandbox run), over the first 300 pages.
+- **The checker** can't see a box drawn over a scan (the scan's text is pixels), text the same color as its background, or text placed outside the page; it reads the first 300 pages. Text drawn under a page-sized image is reported as invisible (an OCR layer), not as hidden.
 - `backend/tests/` covers the block-detection and redaction-safety invariants (`python -m unittest discover -s tests -v`); `backend/smoke_test.py` remains a manual, ad hoc script on top of that, not part of CI.
 
 ## Contributing

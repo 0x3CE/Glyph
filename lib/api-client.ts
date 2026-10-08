@@ -82,3 +82,72 @@ export async function redo(documentId: string): Promise<{ can_undo: boolean; can
   const res = await fetch(`${BASE}/documents/${documentId}/redo`, { method: "POST" });
   return json(res);
 }
+
+/** Real redaction: everything under `rects` (PDF points) is deleted from the
+ * file, then painted black. */
+export async function redactAreas(
+  documentId: string,
+  pageIndex: number,
+  rects: [number, number, number, number][],
+): Promise<{ redacted: number }> {
+  const res = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/redact`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rects }),
+  });
+  return json(res);
+}
+
+/** Strips metadata, XMP, attachments, invisible text… from the whole document.
+ * `removed` lists what was found (keys like "metadata.author", "xmp"). */
+export async function sanitizeDocument(documentId: string): Promise<{ removed: string[] }> {
+  const res = await fetch(`${BASE}/documents/${documentId}/sanitize`, { method: "POST" });
+  return json(res);
+}
+
+export interface ReplaceResult {
+  replaced: number;
+  lines: number;
+  pages: number[];
+  truncated: boolean;
+  font_substituted: boolean;
+}
+
+/** Find & replace across the whole document, as one undo step. */
+export async function replaceText(
+  documentId: string,
+  find: string,
+  replace: string,
+  options: { matchCase: boolean; wholeWord: boolean },
+): Promise<ReplaceResult> {
+  const res = await fetch(`${BASE}/documents/${documentId}/replace`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ find, replace, match_case: options.matchCase, whole_word: options.wholeWord }),
+  });
+  return json(res);
+}
+
+export interface InspectReport {
+  page_count: number;
+  pages_inspected: number;
+  hidden_text: { page: number; text: string }[];
+  unapplied_redactions: number;
+  invisible_text_chars: number;
+  invisible_text_samples: { page: number; text: string }[];
+  metadata: Record<string, string>;
+  has_xmp: boolean;
+  versions: number;
+  attachments: string[];
+  annotations: Record<string, number>;
+}
+
+/** Read-only check of what a PDF hides; the file is not kept. */
+export async function inspectPdf(file: File): Promise<InspectReport> {
+  const res = await fetch(`${BASE}/inspect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/pdf" },
+    body: file,
+  });
+  return json(res);
+}

@@ -1,0 +1,20 @@
+# HTTPS for the API subdomain (API_DOMAIN from .env, e.g. api.glyph-pdf.com).
+# Caddy obtains and renews the Let's Encrypt certificate on its own, as soon
+# as the DNS record points to this server and ports 80/443 are open.
+{$API_DOMAIN} {
+	encode zstd gzip
+
+	# Backend caps uploads at 20 MB itself; refuse anything clearly larger
+	# before it even reaches Python.
+	request_body {
+		max_size 25MB
+	}
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+	}
+
+	reverse_proxy backend:8000
+}

@@ -4,20 +4,35 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import Link from "next/link";
 import { PdfPage } from "@/components/PdfPage";
-import type { PendingSignature } from "@/components/PdfPage";
+import type { PendingSignature, RedactRect, RedactTool } from "@/components/PdfPage";
+import { ReplaceModal } from "@/components/ReplaceModal";
 import { SignatureModal } from "@/components/SignatureModal";
 import { MAX_ZOOM, MIN_ZOOM, usePinchZoom } from "@/components/usePinchZoom";
 import { BrandMark } from "@/components/BrandMark";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { localePath } from "@/lib/i18n";
 import { useI18n } from "@/lib/i18n/I18nProvider";
-import { deleteDocument, documentDownloadUrl, redo, undo, uploadDocument } from "@/lib/api-client";
+import { takePendingUpload } from "@/lib/pending-upload";
+import type { EditorIntent } from "@/lib/pending-upload";
+import {
+  deleteDocument,
+  documentDownloadUrl,
+  redactAreas,
+  redo,
+  sanitizeDocument,
+  undo,
+  uploadDocument,
+} from "@/lib/api-client";
+import type { ReplaceResult } from "@/lib/api-client";
 
 // Multipliers on top of fit-to-width (1 = the page fills the available width).
 // The − / + buttons jump between these; a pinch can land anywhere in between.
 const ZOOM_STEPS = [MIN_ZOOM, 0.75, 1, 1.5, 2, 3, MAX_ZOOM];
 const zoomOutStep = (z: number) => [...ZOOM_STEPS].reverse().find((s) => s < z - 0.01) ?? MIN_ZOOM;
 const zoomInStep = (z: number) => ZOOM_STEPS.find((s) => s > z + 0.01) ?? MAX_ZOOM;
+
+// Toasts close by themselves after this long (or on click).
+const TOAST_MS = 3000;
 
 export function EditorApp() {
   const { locale, t } = useI18n();
@@ -36,6 +51,14 @@ export function EditorApp() {
   const [showSignatureModal, setShowSignatureModal] = useState(false);
   const [pendingSignature, setPendingSignature] = useState<PendingSignature | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [showReplaceModal, setShowReplaceModal] = useState(false);
+  // Redaction mode: areas picked on the current page, applied together.
+  const [redactMode, setRedactMode] = useState(false);
+  const [redactTool, setRedactTool] = useState<RedactTool>("lines");
+  const [redactions, setRedactions] = useState<RedactRect[]>([]);
 
   // Width the page can take inside the scrollable area, so it fits a phone
   // screen instead of being drawn at a fixed desktop size. Small changes
@@ -59,6 +82,22 @@ export function EditorApp() {
   }, []);
   const { afterRender } = usePinchZoom(canvasAreaRef, zoom, setZoom, !!documentId);
 
+  useEffect(() => {
+    if (!error) return;
+    const timer = setTimeout(() => setError(null), TOAST_MS);
+    return () => clearTimeout(timer);
+  }, [error]);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), TOAST_MS);
+    return () => clearTimeout(timer);
+  }, [notice]);
+  useEffect(() => {
+    if (!substitutionNotice) return;
+    const timer = setTimeout(() => setSubstitutionNotice(false), TOAST_MS);
+    return () => clearTimeout(timer);
+  }, [substitutionNotice, version]);
+
   // The server keeps each document in memory until it expires: free it as
   // soon as it's no longer reachable from this tab (another PDF opened, tab
   // closed). Not done in an effect cleanup, which React's StrictMode runs
@@ -73,8 +112,11 @@ export function EditorApp() {
     return () => window.removeEventListener("pagehide", onPageHide);
   }, []);
 
-  const loadFile = useCallback(async (file: File) => {
+  const loadFile = useCallback(async (file: File): Promise<boolean> => {
     setError(null);
+    setNotice(null);
+    setRedactMode(false);
+    setRedactions([]);
     setLoading(true);
     try {
       const res = await uploadDocument(file);
@@ -89,13 +131,84 @@ export function EditorApp() {
       setCanUndo(false);
       setCanRedo(false);
       setFileName(file.name);
+      return true;
     } catch (e) {
       console.error(e);
       setError(t.editor.loadError);
+      return false;
     } finally {
       setLoading(false);
     }
   }, [t]);
+
+  // What a content page asked for, once its file is open (/caviarder-pdf
+  // opens redaction mode, /signer-pdf the signature dialog…).
+  const applyIntent = useCallback((intent: EditorIntent) => {
+    if (intent === "redact" || intent === "anonymize") setRedactMode(true);
+    if (intent === "sign") setShowSignatureModal(true);
+    if (intent === "replace") setShowReplaceModal(true);
+  }, []);
+
+  // A file picked on a content page (/modifier-texte-pdf…) opens right away.
+  useEffect(() => {
+    const pending = takePendingUpload();
+    if (pending) void loadFile(pending.file).then((ok) => ok && applyIntent(pending.intent));
+  }, [loadFile, applyIntent]);
+
+  // Any change that produced a new version of the document.
+  const recordChange = () => {
+    setEditCount((n) => n + 1);
+    setCanUndo(true);
+    setCanRedo(false);
+    setVersion((v) => v + 1);
+  };
+
+  const handleApplyRedactions = async () => {
+    if (!documentId || redactions.length === 0) return;
+    setBusy(true);
+    try {
+      const res = await redactAreas(documentId, pageNumber - 1, redactions);
+      setRedactions([]);
+      recordChange();
+      setNotice(t.tools.redactDone(res.redacted));
+    } catch (e) {
+      console.error(e);
+      setError(t.tools.actionError);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSanitize = async () => {
+    if (!documentId) return;
+    setToolsOpen(false);
+    setBusy(true);
+    try {
+      const res = await sanitizeDocument(documentId);
+      recordChange();
+      const labels = res.removed.map((key) => t.tools.removedLabels[key] ?? key);
+      setNotice(labels.length ? t.tools.sanitizeDone(labels.join(", ")) : t.tools.sanitizeNothing);
+    } catch (e) {
+      console.error(e);
+      setError(t.tools.actionError);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleReplaced = (result: ReplaceResult) => {
+    setShowReplaceModal(false);
+    recordChange();
+    setSubstitutionNotice(result.font_substituted);
+    setNotice(t.replace.done(result.replaced, result.pages) + (result.truncated ? ` ${t.replace.truncated}` : ""));
+    // Show a page that changed if the current one didn't.
+    if (!result.pages.includes(pageNumber)) changePage(result.pages[0]);
+  };
+
+  const changePage = (n: number) => {
+    setRedactions([]); // areas are per page
+    setPageNumber(n);
+  };
 
   const handleEdited = (fontSubstituted: boolean) => {
     setEditCount((n) => n + 1);
@@ -191,11 +304,51 @@ export function EditorApp() {
               <button
                 className="btn btn-ghost"
                 onClick={() => setShowSignatureModal(true)}
-                disabled={!!pendingSignature}
+                disabled={!!pendingSignature || redactMode}
               >
                 <span className="only-wide">{t.editor.signature}</span>
                 <span className="only-narrow">{t.editor.signatureShort}</span>
               </button>
+              <div className="tools-menu">
+                <button
+                  className="btn btn-ghost tools-trigger"
+                  aria-haspopup="menu"
+                  aria-expanded={toolsOpen}
+                  aria-label={t.tools.menu}
+                  onClick={() => setToolsOpen((o) => !o)}
+                  disabled={busy}
+                >
+                  <span className="only-wide">{t.tools.menu}</span>
+                  <span className="only-narrow" aria-hidden="true">
+                    ⋯
+                  </span>
+                </button>
+                {toolsOpen && (
+                  <div className="tools-popover" role="menu">
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        setToolsOpen(false);
+                        setRedactMode(true);
+                      }}
+                    >
+                      {t.tools.redact}
+                    </button>
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        setToolsOpen(false);
+                        setShowReplaceModal(true);
+                      }}
+                    >
+                      {t.replace.menu}
+                    </button>
+                    <button role="menuitem" onClick={handleSanitize}>
+                      {t.tools.sanitize}
+                    </button>
+                  </div>
+                )}
+              </div>
               <a
                 className="btn btn-accent"
                 href={documentDownloadUrl(documentId)}
@@ -217,6 +370,11 @@ export function EditorApp() {
         {error && (
           <div className="toast toast-error" onClick={() => setError(null)}>
             {error}
+          </div>
+        )}
+        {notice && (
+          <div className="toast toast-info" onClick={() => setNotice(null)}>
+            {notice}
           </div>
         )}
         {substitutionNotice && (
@@ -272,7 +430,7 @@ export function EditorApp() {
               <button
                 className="btn btn-icon"
                 disabled={pageNumber <= 1}
-                onClick={() => setPageNumber((n) => n - 1)}
+                onClick={() => changePage(pageNumber - 1)}
                 title={t.editor.previousPage}
               >
                 ←
@@ -283,7 +441,7 @@ export function EditorApp() {
               <button
                 className="btn btn-icon"
                 disabled={pageNumber >= pageCount}
-                onClick={() => setPageNumber((n) => n + 1)}
+                onClick={() => changePage(pageNumber + 1)}
                 title={t.editor.nextPage}
               >
                 →
@@ -310,6 +468,45 @@ export function EditorApp() {
               </button>
             </div>
 
+            {redactMode && (
+              <div className="redact-bar">
+                <p className="redact-hint">{t.tools.redactHint}</p>
+                <div className="redact-actions">
+                  <div className="segmented" role="group">
+                    {(["lines", "area"] as const).map((tool) => (
+                      <button
+                        key={tool}
+                        className={redactTool === tool ? "is-active" : undefined}
+                        aria-pressed={redactTool === tool}
+                        onClick={() => setRedactTool(tool)}
+                      >
+                        {tool === "lines" ? t.tools.redactLines : t.tools.redactArea}
+                      </button>
+                    ))}
+                  </div>
+                  <button className="btn btn-ghost" onClick={handleSanitize} disabled={busy}>
+                    {t.tools.sanitize}
+                  </button>
+                  <button
+                    className="btn btn-accent"
+                    onClick={handleApplyRedactions}
+                    disabled={busy || redactions.length === 0}
+                  >
+                    {t.tools.redactApply(redactions.length)}
+                  </button>
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      setRedactMode(false);
+                      setRedactions([]);
+                    }}
+                  >
+                    {t.tools.redactClose}
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="page-canvas" ref={measureCanvasArea}>
               <PdfPage
                 documentId={documentId}
@@ -322,6 +519,11 @@ export function EditorApp() {
                 pendingSignature={pendingSignature}
                 onSignaturePlaced={handleSignaturePlaced}
                 onCancelSignature={() => setPendingSignature(null)}
+                redactMode={redactMode}
+                redactTool={redactTool}
+                redactions={redactions}
+                onAddRedaction={(rect) => setRedactions((list) => [...list, rect])}
+                onRemoveRedaction={(index) => setRedactions((list) => list.filter((_, i) => i !== index))}
               />
             </div>
           </div>
@@ -333,6 +535,14 @@ export function EditorApp() {
           </div>
         )}
       </main>
+
+      {showReplaceModal && documentId && (
+        <ReplaceModal
+          documentId={documentId}
+          onReplaced={handleReplaced}
+          onClose={() => setShowReplaceModal(false)}
+        />
+      )}
 
       {showSignatureModal && (
         <SignatureModal

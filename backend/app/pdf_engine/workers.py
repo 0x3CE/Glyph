@@ -15,6 +15,8 @@ from typing import Any
 import pymupdf
 
 from .editor import apply_block_edit
+from .redaction import inspect_document, redact_areas, sanitize_document
+from .replace import compile_search, count_matches, replace_on_page
 from .signature import apply_signature
 from .structure import extract_structure
 from .types import Block, EncryptedPdfError
@@ -91,3 +93,73 @@ def worker_add_signature(
     buf = io.BytesIO()
     doc.save(buf)
     return {"bbox": new_bbox}, buf.getvalue()
+
+
+def worker_redact(
+    pdf_bytes: bytes, page_index: int, rects: list[tuple[float, float, float, float]]
+) -> tuple[Meta, bytes]:
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    if not (0 <= page_index < doc.page_count):
+        raise IndexError("page not found")
+    redacted = redact_areas(doc[page_index], rects)
+    buf = io.BytesIO()
+    # garbage=3: drop objects nothing references any more, so no stray copy
+    # of what was just removed survives in the file.
+    doc.save(buf, garbage=3, deflate=True)
+    return {"redacted": redacted}, buf.getvalue()
+
+
+def worker_sanitize(pdf_bytes: bytes) -> tuple[Meta, bytes]:
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    removed = sanitize_document(doc)
+    buf = io.BytesIO()
+    # A full rewrite (never incremental) with garbage collection: earlier
+    # versions of the file and orphaned objects don't survive either.
+    doc.save(buf, garbage=4, deflate=True, clean=True)
+    return {"removed": removed}, buf.getvalue()
+
+
+def worker_inspect(raw: bytes) -> tuple[Meta, None]:
+    """Read-only report of what a PDF hides (redaction.inspect_document);
+    the file is not kept."""
+    doc = pymupdf.open(stream=raw, filetype="pdf")
+    if doc.needs_pass:
+        raise EncryptedPdfError("password-protected PDFs are not supported -- please remove the password first")
+    return inspect_document(doc), None
+
+
+# Find & replace stops looking past this many pages (like the checker).
+MAX_SEARCHED_PAGES = 300
+
+
+def worker_find(pdf_bytes: bytes, find: str, match_case: bool, whole_word: bool) -> tuple[Meta, None]:
+    """Which pages hold the searched text, and how many times."""
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    search = compile_search(find, match_case, whole_word)
+    pages = []
+    for page_index in range(min(doc.page_count, MAX_SEARCHED_PAGES)):
+        count = count_matches(doc[page_index], search, match_case)
+        if count:
+            pages.append([page_index, count])
+    return {"pages": pages}, None
+
+
+def worker_replace_page(
+    pdf_bytes: bytes,
+    page_index: int,
+    find: str,
+    replacement: str,
+    match_case: bool,
+    whole_word: bool,
+    max_lines: int,
+) -> tuple[Meta, bytes]:
+    """One page at a time, so each run stays well inside the sandbox's CPU
+    budget however many pages match."""
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    if not (0 <= page_index < doc.page_count):
+        raise IndexError("page not found")
+    search = compile_search(find, match_case, whole_word)
+    meta = replace_on_page(doc, doc[page_index], search, replacement, match_case, max_lines)
+    buf = io.BytesIO()
+    doc.save(buf)
+    return meta, buf.getvalue()

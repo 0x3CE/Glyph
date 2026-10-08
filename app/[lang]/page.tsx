@@ -1,14 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { BrandMark } from "@/components/BrandMark";
-import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { BUY_ME_A_COFFEE_URL, SiteFooter, SiteHeader } from "@/components/SiteChrome";
 import { getDictionary, hasLocale, localePath } from "@/lib/i18n";
 import { localeAlternates, localeOpenGraph } from "@/lib/i18n/metadata";
 
-// Plain link, not Buy Me a Coffee's widget script: the site promises no
-// third-party tracking, and the widget would load one on every visit.
-const BUY_ME_A_COFFEE_URL = "https://buymeacoffee.com/0x3CE";
 
 type Props = { params: Promise<{ lang: string }> };
 
@@ -58,37 +54,7 @@ export default async function LandingPage({ params }: Props) {
 
   return (
     <>
-      <header className="site-header">
-        <Link href={localePath(lang, "/")} className="brand">
-          <span className="brand-mark">
-            <BrandMark />
-          </span>
-          <span className="brand-name">Glyph</span>
-        </Link>
-        <nav className="site-nav">
-          <LanguageSwitcher
-            locale={lang}
-            path="/"
-            label={t.switcher.label}
-            shortLabel={t.switcher.shortLabel}
-            ariaLabel={t.switcher.ariaLabel}
-            className="btn btn-ghost lang-switch"
-          />
-          <a
-            href={BUY_ME_A_COFFEE_URL}
-            className="btn btn-ghost"
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={t.nav.coffeeAria}
-          >
-            <span aria-hidden="true">☕</span>
-            <span className="nav-coffee-label">{t.nav.coffee}</span>
-          </a>
-          <Link href={editorHref} className="btn btn-accent">
-            {t.nav.openEditor}
-          </Link>
-        </nav>
-      </header>
+      <SiteHeader locale={lang} />
 
       <section className="hero">
         <span className="hero-eyebrow">{t.hero.eyebrow}</span>
@@ -191,16 +157,7 @@ export default async function LandingPage({ params }: Props) {
         </div>
       </section>
 
-      <footer className="site-footer">
-        <span>© {new Date().getFullYear()} Glyph</span>
-        <span className="footer-links">
-          <span>{t.footer.tagline}</span>
-          <LanguageSwitcher locale={lang} path="/" label={t.switcher.label} ariaLabel={t.switcher.ariaLabel} />
-          <a href={BUY_ME_A_COFFEE_URL} target="_blank" rel="noopener noreferrer">
-            Buy me a coffee
-          </a>
-        </span>
-      </footer>
+      <SiteFooter locale={lang} />
 
       <script
         type="application/ld+json"

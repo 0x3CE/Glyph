@@ -128,3 +128,71 @@ Aucun corps. Déplace le curseur dans la pile d'historique du document (clampé 
 ### `DELETE /api/documents/{document_id}`
 
 Libère le document de la mémoire. `{ "ok": true }` même si l'id n'existait pas déjà (idempotent). Le frontend l'appelle quand l'onglet se ferme (`pagehide`, avec `keepalive`) et quand un autre PDF remplace le document courant ; sinon le document expire après `DOCUMENT_TTL_MINUTES` d'inactivité.
+
+---
+
+### `POST /api/documents/{document_id}/pages/{page_index}/redact`
+
+Caviardage réel. Corps JSON : `{"rects": [[x0, y0, x1, y1], …]}` (points PDF, 1 à 200 zones, coordonnées finies). Tout ce qui se trouve sous chaque zone est supprimé du fichier (texte, pixels d'image, tracés entièrement couverts), puis la zone est peinte en noir. Les zones sont rognées à la page ; celles de moins d'un point sont ignorées.
+
+```json
+// 200
+{ "redacted": 2 }
+```
+
+`404` si le document ou la page n'existe pas. `422` (validation) pour une coordonnée NaN ou infinie.
+
+---
+
+### `POST /api/documents/{document_id}/sanitize`
+
+Aucun corps. Retire les métadonnées (dictionnaire d'informations et XMP), les pièces jointes, le JavaScript, le texte invisible, les vignettes, applique les caviardages marqués mais jamais appliqués, puis réécrit entièrement le fichier (sans ses anciennes versions). Les liens et les champs de formulaire remplis sont conservés. `removed` liste ce qui a été trouvé, en clés stables que le frontend traduit.
+
+```json
+// 200
+{ "removed": ["metadata.author", "metadata.keywords", "xmp"] }
+```
+
+---
+
+### `POST /api/documents/{document_id}/replace`
+
+Rechercher-remplacer dans tout le document. Corps JSON :
+
+```json
+{ "find": "Dupont", "replace": "Martin", "match_case": false, "whole_word": false }
+```
+
+`find` : 1 à 200 caractères, `replace` : 0 à 200, sans retour à la ligne. La recherche ignore les ligatures et les espaces spéciaux (normalisation NFKC). Chaque ligne trouvée est éditée comme une édition manuelle. Une exécution sandbox cherche les pages concernées, puis une exécution par page fait les éditions (60 lignes au plus par page, 300 par requête). L'ensemble forme **une seule** étape d'historique.
+
+```json
+// 200
+{ "replaced": 3, "lines": 2, "pages": [1, 4], "truncated": false, "font_substituted": true }
+```
+
+`pages` est en base 1. `truncated` indique que la limite a été atteinte et qu'il reste des occurrences. Sans occurrence, la réponse a `replaced: 0`, et rien n'est ajouté à l'historique.
+
+---
+
+### `POST /api/inspect`
+
+Vérificateur de PDF caviardé. Corps : les octets bruts du PDF. Le fichier est analysé dans la sandbox, **ni modifié ni conservé** : pas de `document_id`.
+
+```json
+// 200
+{
+  "page_count": 2,
+  "pages_inspected": 2,
+  "hidden_text": [{ "page": 1, "text": "Salarié : Jean Dupont" }],
+  "unapplied_redactions": 0,
+  "invisible_text_chars": 0,
+  "invisible_text_samples": [],
+  "metadata": { "author": "Jean Dupont" },
+  "has_xmp": false,
+  "versions": 1,
+  "attachments": [],
+  "annotations": {}
+}
+```
+
+`hidden_text` : texte couvert à 60 % au moins par une forme opaque ou une image sans transparence dessinée après lui, ou par une annotation remplie. Le texte sous une image de la taille de la page (un scan) compte comme invisible, pas comme caché. 300 pages analysées au plus, 50 résultats par liste. `400` si le PDF est illisible ou protégé par mot de passe, `413` au-delà de `MAX_UPLOAD_MB`, `503` si la sandbox est saturée.

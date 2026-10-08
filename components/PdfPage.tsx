@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type React from "react";
 import { getDocument } from "pdfjs-dist";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 import "../lib/pdf-setup";
@@ -19,6 +20,9 @@ const MAX_CANVAS_PIXELS = 12_000_000;
 // iOS Safari zooms the whole page into any text field under 16px, and stays
 // zoomed after the edit.
 const MIN_FIELD_FONT_PX = 16;
+
+export type RedactRect = [number, number, number, number]; // PDF points
+export type RedactTool = "lines" | "area";
 
 export interface PendingSignature {
   blob: Blob;
@@ -40,6 +44,12 @@ interface PdfPageProps {
   pendingSignature: PendingSignature | null;
   onSignaturePlaced: () => void;
   onCancelSignature: () => void;
+  /** Redaction mode: clicks select areas to redact instead of editing. */
+  redactMode?: boolean;
+  redactTool?: RedactTool;
+  redactions?: RedactRect[];
+  onAddRedaction?: (rect: RedactRect) => void;
+  onRemoveRedaction?: (index: number) => void;
 }
 
 interface EditingState {
@@ -60,6 +70,11 @@ export function PdfPage({
   pendingSignature,
   onSignaturePlaced,
   onCancelSignature,
+  redactMode = false,
+  redactTool = "lines",
+  redactions = [],
+  onAddRedaction,
+  onRemoveRedaction,
 }: PdfPageProps) {
   const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -174,8 +189,37 @@ export function PdfPage({
     };
   }, [documentId, pageIndex, version, availableWidth, zoom]);
 
+  // Area tool: a rectangle drawn with the pointer, in PDF points.
+  const [drawing, setDrawing] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const toPdfPoint = (e: React.PointerEvent) => {
+    const r = containerRef.current!.getBoundingClientRect();
+    return { x: (e.clientX - r.left) / scale, y: (e.clientY - r.top) / scale };
+  };
+  const finishDrawing = () => {
+    if (drawing) {
+      const rect: RedactRect = [
+        Math.min(drawing.x0, drawing.x1),
+        Math.min(drawing.y0, drawing.y1),
+        Math.max(drawing.x0, drawing.x1),
+        Math.max(drawing.y0, drawing.y1),
+      ];
+      if (rect[2] - rect[0] > 3 && rect[3] - rect[1] > 3) onAddRedaction?.(rect);
+    }
+    setDrawing(null);
+  };
+
+  const onBlockClick = (block: Block) => {
+    if (redactMode) {
+      // A little margin, so accents and descenders are inside the area.
+      const [x0, y0, x1, y1] = block.bbox;
+      onAddRedaction?.([x0 - 1, y0 - 1, x1 + 1, y1 + 1]);
+      return;
+    }
+    startEdit(block);
+  };
+
   const startEdit = (block: Block) => {
-    if (!pageSize || pendingSignature) return;
+    if (!pageSize || pendingSignature || redactMode) return;
     const [x0, y0, x1, y1] = block.bbox;
     setEditing({
       block,
@@ -257,11 +301,58 @@ export function PdfPage({
                   width: (x1 - x0) * scale,
                   height: (y1 - y0) * scale,
                 }}
-                onClick={() => startEdit(block)}
+                onClick={() => onBlockClick(block)}
               />
             );
           })}
       </div>
+      {redactMode && redactTool === "area" && (
+        <div
+          className="redact-draw-layer"
+          onPointerDown={(e) => {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            const p = toPdfPoint(e);
+            setDrawing({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
+          }}
+          onPointerMove={(e) => {
+            if (!drawing) return;
+            const p = toPdfPoint(e);
+            setDrawing({ ...drawing, x1: p.x, y1: p.y });
+          }}
+          onPointerUp={finishDrawing}
+          onPointerCancel={() => setDrawing(null)}
+        />
+      )}
+      {redactMode &&
+        redactions.map(([x0, y0, x1, y1], i) => (
+          <div
+            key={`${i}-${x0}-${y0}`}
+            className="redact-pending"
+            style={{ left: x0 * scale, top: y0 * scale, width: (x1 - x0) * scale, height: (y1 - y0) * scale }}
+          >
+            <button
+              type="button"
+              className="redact-remove"
+              aria-label={t.tools.redactRemove}
+              title={t.tools.redactRemove}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => onRemoveRedaction?.(i)}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      {drawing && (
+        <div
+          className="redact-pending redact-drawing"
+          style={{
+            left: Math.min(drawing.x0, drawing.x1) * scale,
+            top: Math.min(drawing.y0, drawing.y1) * scale,
+            width: Math.abs(drawing.x1 - drawing.x0) * scale,
+            height: Math.abs(drawing.y1 - drawing.y0) * scale,
+          }}
+        />
+      )}
       {editing &&
         (() => {
           const span = dominantSpan(editing.block);

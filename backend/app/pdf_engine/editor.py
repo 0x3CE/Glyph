@@ -6,10 +6,10 @@ from __future__ import annotations
 
 import pymupdf
 
-from .fonts import FontChoice, _extract_span_font, _font_covers_text, _measure, _metric_match_scale, pick_font
+from .fonts import FontChoice, _measure, _metric_match_scale, pick_font
 from .formatting_diff import _build_formatted_segments
 from .geometry import _sibling_bound
-from .types import Block, rgb_int_to_tuple
+from .types import Block, Line, rgb_int_to_tuple
 
 
 def apply_block_edit(
@@ -53,21 +53,23 @@ def apply_block_edit(
     # An unreadable text layer (see Block.text_reliable) can't be diffed
     # against: the user retyped the whole line, so it is all new text.
     segments = _build_formatted_segments(block, new_text) if block.text_reliable else [(new_text, None, False)]
-    for text, source_span, verified in segments:
+    for text, source_span, _verified in segments:
         if source_span is not None:
-            reused = _extract_span_font(doc, page, source_span)
-            if reused is not None:
-                # An INFERRED span (a replace/insert `_span_for_change`
-                # attributed by position, e.g. "TEMF" -> "GDPR" landing on
-                # "TEMF"'s own bold span) has never actually rendered this
-                # text -- unlike a VERIFIED "equal" run, which is by
-                # construction a substring of what this span already
-                # rendered successfully, so re-checking would be redundant.
-                if verified or _font_covers_text(reused.fontfile, text):
-                    cleanup_choices.append(reused)
-                    resolved.append((text, reused, rgb_int_to_tuple(source_span.color), 1.0))
-                    continue
-                reused.cleanup()
+            # Even a VERIFIED "equal" run (a verbatim substring of what this
+            # span already rendered) needs the coverage check: the original
+            # drew glyph ids directly, while reinsertion goes through the
+            # font's Unicode cmap. Real bug: a letter's "Chère Adhérente,"
+            # was set in a subset ArialNarrow with no cmap at all; keeping
+            # the untouched part in it turned the whole run into a single
+            # .notdef box, invisible to search and copy-paste too.
+            # The fallback is chosen for this span's own style (pick_font on
+            # it alone), so a bold word stays bold.
+            span_block = Block(id="run", bbox=source_span.bbox, lines=[Line(bbox=source_span.bbox, spans=[source_span])])
+            choice = pick_font(doc, page, span_block, text)
+            cleanup_choices.append(choice)
+            scale = _metric_match_scale(source_span, choice) if choice.substituted else 1.0
+            resolved.append((text, choice, rgb_int_to_tuple(source_span.color), scale))
+            continue
         resolved.append((text, fallback_font, fallback_color, fallback_scale))
 
     # Split into per-rendering-line segment lists at the user's own "\n" --
@@ -204,17 +206,12 @@ def apply_block_edit(
             baseline_y += line_height
 
         # "Substituted" (drives the frontend's font-substitution notice)
-        # means: some run actually used the fallback font, and that
-        # fallback itself required substitution -- not just that a
-        # fallback was computed but never needed (e.g. every run resolved
-        # to a reused original span).
+        # means: some run was actually written in a substitute font -- not
+        # just that a fallback was computed but never needed (e.g. every
+        # run resolved to a reused original span).
         # A bundled copy of the original typeface itself (`same_typeface`)
         # isn't a substitution the user needs to hear about.
-        substituted = (
-            fallback_font.substituted
-            and not fallback_font.same_typeface
-            and any(fc is fallback_font for _t, fc, _c, _s in resolved)
-        )
+        substituted = any(fc.substituted and not fc.same_typeface for _t, fc, _c, _s in resolved)
         return substituted, (x0, y0, x0 + max(max_line_width, block_width), y0 + needed_height)
     finally:
         for fc in cleanup_choices:

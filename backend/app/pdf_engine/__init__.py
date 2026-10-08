@@ -23,6 +23,8 @@ pickup/debugging (see docs/DECISIONS.md):
 - `formatting_diff`: diff-based per-run formatting preservation.
 - `editor`: `apply_block_edit`, the orchestrator tying the above together.
 - `signature`: `apply_signature`, stamping an uploaded/drawn signature onto a page.
+- `redaction`: real redaction, metadata clean-up, and the hidden-content checker.
+- `replace`: find & replace, as a series of ordinary line edits.
 - `workers`: the isolated-subprocess entry points `main.py` calls.
 
 Everything below is re-exported here, including private names, so existing
@@ -83,7 +85,19 @@ from .types import (
     rgb_int_to_tuple,
 )
 from .editor import apply_block_edit
-from .workers import worker_add_signature, worker_apply_edit, worker_extract_structure, worker_validate_pdf
+from .redaction import inspect_document, redact_areas, sanitize_document
+from .replace import compile_search, replace_in_text, replace_on_page
+from .workers import (
+    worker_add_signature,
+    worker_apply_edit,
+    worker_extract_structure,
+    worker_find,
+    worker_inspect,
+    worker_redact,
+    worker_replace_page,
+    worker_sanitize,
+    worker_validate_pdf,
+)
 
 __all__ = [
     "FLAG_BOLD",
@@ -101,8 +115,19 @@ __all__ = [
     "extract_structure",
     "pick_font",
     "rgb_int_to_tuple",
+    "compile_search",
+    "inspect_document",
+    "redact_areas",
+    "replace_in_text",
+    "replace_on_page",
+    "sanitize_document",
     "worker_add_signature",
     "worker_apply_edit",
     "worker_extract_structure",
+    "worker_find",
+    "worker_inspect",
+    "worker_redact",
+    "worker_replace_page",
+    "worker_sanitize",
     "worker_validate_pdf",
 ]

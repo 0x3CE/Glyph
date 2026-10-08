@@ -41,7 +41,7 @@ Comme `structure` et `edit` **recalculent** `extract_structure()` à chaque appe
 
 | Fichier | Rôle |
 |---|---|
-| `backend/app/pdf_engine/` | Le moteur, un module par responsabilité (extraction de structure, choix de police, redaction + réinsertion, placement de signature) + les fonctions `worker_*` exécutées côté sandbox, toutes réexportées par `__init__.py`. Toute la logique métier est là — voir [`DECISIONS.md`](./DECISIONS.md) pour le détail de chaque choix non-évident. |
+| `backend/app/pdf_engine/` | Le moteur, un module par responsabilité (extraction de structure, choix de police, redaction + réinsertion, placement de signature, caviardage/nettoyage/vérification, rechercher-remplacer) + les fonctions `worker_*` exécutées côté sandbox, toutes réexportées par `__init__.py`. Toute la logique métier est là — voir [`DECISIONS.md`](./DECISIONS.md) pour le détail de chaque choix non-évident. |
 | `backend/app/fonts/` + `backend/scripts/fetch_fonts.py` | Catalogue d'environ 240 familles de polices libres (déclaré dans `pdf_engine/font_catalog.py`). Seuls Liberation et Open Sans sont commités, le reste est téléchargé par le script (au build Docker, et une fois en local). |
 | `backend/app/isolation.py` | Exécute chaque opération PyMuPDF (upload, structure, édition, signature) dans un sous-processus jetable avec limites mémoire/CPU/temps, au plus `SANDBOX_MAX_CONCURRENCY` à la fois. Les résultats reviennent en octets bruts + JSON, jamais en pickle — voir [`DECISIONS.md`](./DECISIONS.md#isoler-le-parsing-pdf-dans-un-sous-processus). |
 | `backend/app/main.py` | Routes FastAPI, fines — délèguent tout à `isolation.py`/`pdf_engine/` et `documents.py`. |
@@ -49,7 +49,8 @@ Comme `structure` et `edit` **recalculent** `extract_structure()` à chaque appe
 | `components/PdfPage.tsx` | Rendu canvas + overlay cliquable + `<textarea>` d'édition + intègre `SignaturePlacer`. |
 | `components/SignatureModal.tsx` | Capture de la signature source : dessin sur `<canvas>`, ou import d'un fichier PDF/PNG/JPG. |
 | `components/SignaturePlacer.tsx` | Cadre déplaçable/redimensionnable pour positionner la signature sur la page avant validation. |
-| `components/EditorApp.tsx` | Écran `/editor` (et `/en/editor`) complet (upload, navigation de page, undo/redo, signature, téléchargement). |
+| `components/EditorApp.tsx` | Écran `/editor` (et `/en/editor`) complet (upload, navigation de page, undo/redo, signature, menu Outils : caviarder, rechercher-remplacer, nettoyer les métadonnées, téléchargement). |
+| `lib/seo/` + `components/SeoPage.tsx` | Pages de contenu (outils, guides, article, conditions) en deux langues, avec slugs traduits ; rendues par `app/[lang]/[slug]/page.tsx`. |
 | `lib/api-client.ts` | Tous les appels `fetch` vers le backend, typés. |
 | `app/[lang]/page.tsx` | Page marketing statique (SSG), générée pour `fr` et `en` — voir la section SEO du README. |
 | `proxy.ts` + `lib/i18n/` | Choix de la langue (préfixe `/en`, pays à la première visite, cookie) et dictionnaires `fr` / `en` — voir [`DECISIONS.md`](./DECISIONS.md#site-bilingue--des-url-distinctes-le-pays-seulement-comme-premier-choix). |

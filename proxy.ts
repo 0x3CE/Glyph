@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { DEFAULT_LOCALE, FRENCH_COUNTRIES, LOCALE_COOKIE, hasLocale, localePath } from "@/lib/i18n/config";
 import type { Locale } from "@/lib/i18n/config";
+import { translateFrenchPath } from "@/lib/seo/registry";
 
 // Locale routing (Next 16 "proxy", formerly middleware):
 //
@@ -40,7 +41,9 @@ export function proxy(request: NextRequest) {
 
   if (preferredLocale(request) === "en") {
     const url = request.nextUrl.clone();
-    url.pathname = localePath("en", pathname);
+    // Content pages have their own English slug (/modifier-texte-pdf ->
+    // /en/edit-pdf-text); everything else just gets the prefix.
+    url.pathname = translateFrenchPath(pathname, "en") ?? localePath("en", pathname);
     // Temporary: the same URL must stay French for other visitors.
     return NextResponse.redirect(url, 307);
   }

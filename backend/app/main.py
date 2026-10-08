@@ -17,19 +17,35 @@ from .pdf_engine import (
     worker_add_signature,
     worker_apply_edit,
     worker_extract_structure,
+    worker_find,
+    worker_inspect,
+    worker_redact,
+    worker_replace_page,
+    worker_sanitize,
     worker_validate_pdf,
 )
 from .schemas import (
     EditRequest,
     EditResponse,
+    FindResult,
     HistoryResponse,
+    InspectReport,
+    PageReplaceResult,
     PageStructure,
+    RedactRequest,
+    RedactResponse,
+    ReplaceRequest,
+    ReplaceResponse,
+    SanitizeResponse,
     SignatureResponse,
     UploadResponse,
 )
 
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "20")) * 1024 * 1024
 MAX_SIGNATURE_BYTES = int(os.environ.get("MAX_SIGNATURE_MB", "5")) * 1024 * 1024
+# Find & replace: lines edited per sandbox run (one page each) and per request.
+REPLACE_MAX_LINES_PER_PAGE = 60
+REPLACE_MAX_LINES = 300
 
 # Comma-separated list, e.g. "https://glyph.vercel.app,http://localhost:3000".
 _allowed_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000")
@@ -200,6 +216,91 @@ async def add_signature(
     response = _validated(SignatureResponse, meta)
     _push_or_error(document_id, new_pdf)
     return response
+
+
+@app.post("/api/documents/{document_id}/pages/{page_index}/redact", response_model=RedactResponse)
+def redact(document_id: str, page_index: int, body: RedactRequest) -> RedactResponse:
+    """Real redaction: everything under the areas is deleted from the file,
+    then painted black (pdf_engine/redaction.py)."""
+    pdf = _current_or_404(document_id)
+    try:
+        meta, new_pdf = run_isolated(worker_redact, pdf, page_index, body.rects)
+    except SandboxError as e:
+        raise _sandbox_error_to_http(e, not_found={"IndexError": "page not found"}) from e
+    response = _validated(RedactResponse, meta)
+    _push_or_error(document_id, new_pdf)
+    return response
+
+
+@app.post("/api/documents/{document_id}/sanitize", response_model=SanitizeResponse)
+def sanitize(document_id: str) -> SanitizeResponse:
+    """Strips metadata, XMP, attachments, JavaScript, invisible text..."""
+    pdf = _current_or_404(document_id)
+    try:
+        meta, new_pdf = run_isolated(worker_sanitize, pdf)
+    except SandboxError as e:
+        raise _sandbox_error_to_http(e) from e
+    response = _validated(SanitizeResponse, meta)
+    _push_or_error(document_id, new_pdf)
+    return response
+
+
+@app.post("/api/documents/{document_id}/replace", response_model=ReplaceResponse)
+def replace(document_id: str, body: ReplaceRequest) -> ReplaceResponse:
+    """Find & replace across the document (pdf_engine/replace.py). One
+    sandbox run to find the pages, then one per page to edit -- each stays
+    inside the CPU budget -- and a single undo step for the whole thing."""
+    pdf = _current_or_404(document_id)
+    nothing = ReplaceResponse(replaced=0, lines=0, pages=[], truncated=False, font_substituted=False)
+    if body.match_case and body.find == body.replace:
+        return nothing
+    options = (body.match_case, body.whole_word)
+    try:
+        found_meta, _ = run_isolated(worker_find, pdf, body.find, *options)
+        found = _validated(FindResult, found_meta)
+        replaced = lines = 0
+        changed: list[int] = []
+        substituted = truncated = False
+        for page_index, _count in found.pages:
+            budget = min(REPLACE_MAX_LINES_PER_PAGE, REPLACE_MAX_LINES - lines)
+            if budget <= 0:
+                truncated = True
+                break
+            meta, new_pdf = run_isolated(
+                worker_replace_page, pdf, page_index, body.find, body.replace, *options, budget
+            )
+            result = _validated(PageReplaceResult, meta)
+            if result.lines:
+                if new_pdf is None:
+                    raise HTTPException(422, "failed to process PDF")
+                pdf = new_pdf
+                changed.append(page_index + 1)
+            replaced += result.replaced
+            lines += result.lines
+            substituted |= result.font_substituted
+            truncated |= result.remaining_lines > 0
+    except SandboxError as e:
+        raise _sandbox_error_to_http(e) from e
+    if not changed:
+        return nothing
+    _push_or_error(document_id, pdf)
+    return ReplaceResponse(
+        replaced=replaced, lines=lines, pages=changed, truncated=truncated, font_substituted=substituted
+    )
+
+
+@app.post("/api/inspect", response_model=InspectReport)
+async def inspect(request: Request) -> InspectReport:
+    """Read-only report of what a PDF hides. The file is analysed in the
+    sandbox and never stored."""
+    raw = await _read_body(request, MAX_UPLOAD_BYTES, "file")
+    try:
+        meta, _ = await run_in_threadpool(run_isolated, worker_inspect, raw)
+    except SandboxBusyError as e:
+        raise HTTPException(503, str(e)) from e
+    except SandboxError as e:
+        raise HTTPException(400, f"invalid PDF: {e}") from e
+    return _validated(InspectReport, meta)
 
 
 def _history(state: documents.DocumentState | None) -> HistoryResponse:

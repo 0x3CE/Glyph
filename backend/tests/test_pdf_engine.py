@@ -768,3 +768,285 @@ class SignaturePlacementTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _all_stream_bytes(pdf: bytes) -> bytes:
+    """Every (decompressed) stream of a PDF, to check that removed text is
+    really gone from the file, not just from the page."""
+    doc = pymupdf.open(stream=pdf)
+    out = []
+    for xref in range(1, doc.xref_length()):
+        try:
+            if doc.xref_is_stream(xref):
+                out.append(doc.xref_stream(xref) or b"")
+        except Exception:
+            pass
+    return b"".join(out) + pdf
+
+
+class CmaplessOriginalFontTests(unittest.TestCase):
+    """Real bug: a letter's "Chère Adhérente," was set in a subset font with
+    no Unicode cmap (common in Word exports). Editing the end of the line
+    kept the untouched start in that font, which can't map characters to
+    glyphs: the whole run became a single .notdef box."""
+
+    def _letter(self) -> bytes:
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_font(fontname="lib", fontfile=str(Path(pdf_engine._BUNDLED_FONT_DIR) / "liberation" / "LiberationSans-Regular.ttf"))
+        page.insert_text((50, 80), "Chère Adhérente,", fontname="lib", fontsize=12)
+        doc = pymupdf.open(stream=doc.tobytes(garbage=3))
+        for xref in range(1, doc.xref_length()):
+            # A subset name, as Word writes it, so the span's font is found
+            # again on the page.
+            if doc.xref_get_key(xref, "BaseFont")[0] == "name":
+                doc.xref_set_key(xref, "BaseFont", "/EAAAAB+LiberationSans")
+            if doc.xref_get_key(xref, "FontName")[0] == "name":
+                doc.xref_set_key(xref, "FontName", "/EAAAAB+LiberationSans")
+            if doc.xref_get_key(xref, "FontFile2")[0] == "xref":
+                stream_xref = int(doc.xref_get_key(xref, "FontFile2")[1].split()[0])
+                font = TTFont(io.BytesIO(doc.xref_stream(stream_xref)))
+                del font["cmap"]
+                font["post"].formatType = 3.0  # no glyph names either, like a real subset
+                out = io.BytesIO()
+                font.save(out)
+                doc.update_stream(stream_xref, out.getvalue())
+        return doc.tobytes()
+
+    def test_untouched_run_in_a_cmapless_font_stays_readable(self):
+        pdf = self._letter()
+        doc = pymupdf.open(stream=pdf)
+        self.assertIn("Chère Adhérente,", doc[0].get_text())  # the fixture extracts fine, like the real letter
+        block = extract_structure(doc[0])[0]
+        apply_block_edit(doc, doc[0], block, "Chère Adhérente, bonjour")
+        self.assertIn("Chère Adhérente, bonjour", doc[0].get_text())
+        trace = [t for t in doc[0].get_texttrace() if "Adh" in "".join(chr(c[0]) for c in t["chars"])][0]
+        self.assertGreater(trace["bbox"][2] - trace["bbox"][0], 50)  # not all glyphs piled up in one box
+
+
+class RealRemovalTests(unittest.TestCase):
+    """Glyph's core promise: what is edited or redacted is gone from the
+    FILE, not only from the screen (no copy in an orphaned object, no
+    earlier version kept)."""
+
+    def _doc(self):
+        doc = pymupdf.open()
+        page = doc.new_page(width=400, height=200)
+        page.insert_text((40, 50), "IBAN : SECRET-4242", fontsize=11, fontname="cour")
+        page.insert_text((40, 80), "Montant : 120,00 EUR", fontsize=11, fontname="cour")
+        return doc
+
+    def test_edited_text_is_gone_from_the_file(self):
+        src = self._doc().tobytes()
+        block = [b for b in extract_structure(pymupdf.open(stream=src)[0]) if "SECRET" in b.text][0]
+        _meta, out = pdf_engine.worker_apply_edit(src, 0, block.id, "IBAN : FR76 0000")
+        self.assertNotIn(b"SECRET-4242", _all_stream_bytes(out))
+        self.assertIn("FR76 0000", pymupdf.open(stream=out)[0].get_text())
+
+    def test_redaction_removes_the_text_and_keeps_the_rest(self):
+        src = self._doc().tobytes()
+        meta, out = pdf_engine.worker_redact(src, 0, [(35, 38, 220, 54)])
+        self.assertEqual(meta["redacted"], 1)
+        self.assertNotIn(b"SECRET-4242", _all_stream_bytes(out))
+        self.assertIn("Montant : 120,00 EUR", pymupdf.open(stream=out)[0].get_text())
+
+    def test_redaction_ignores_areas_outside_the_page(self):
+        meta, _out = pdf_engine.worker_redact(self._doc().tobytes(), 0, [(500, 500, 600, 600)])
+        self.assertEqual(meta["redacted"], 0)
+
+    def test_sanitize_strips_metadata_and_xmp(self):
+        doc = self._doc()
+        doc.set_metadata({"author": "Jean Dupont", "keywords": "IDMATRIC=9410512", "title": "Bulletin"})
+        doc.set_xml_metadata('<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"/></x:xmpmeta>')
+        meta, out = pdf_engine.worker_sanitize(doc.tobytes())
+        self.assertIn("metadata.author", meta["removed"])
+        self.assertIn("metadata.keywords", meta["removed"])
+        self.assertIn("xmp", meta["removed"])
+        cleaned = pymupdf.open(stream=out)
+        self.assertFalse(any(cleaned.metadata.get(k) for k in ("author", "keywords", "title")))
+        self.assertFalse(cleaned.get_xml_metadata().strip())
+        self.assertNotIn(b"Jean Dupont", out)
+
+
+class InspectTests(unittest.TestCase):
+    """The checker reports what a PDF still hides, without changing it."""
+
+    def _report(self, doc):
+        meta, blob = pdf_engine.worker_inspect(doc.tobytes())
+        self.assertIsNone(blob)
+        return meta
+
+    def test_white_box_overlay_is_detected(self):
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text((50, 80), "Ancien montant 1 200", fontsize=12)
+        page.draw_rect(pymupdf.Rect(45, 65, 220, 85), color=None, fill=(1, 1, 1))  # drawn AFTER the text
+        page.insert_text((50, 80), "Nouveau 900", fontsize=12)
+        hidden = self._report(doc)["hidden_text"]
+        self.assertTrue(any("Ancien montant" in h["text"] for h in hidden), hidden)
+
+    def test_black_box_fake_redaction_is_detected(self):
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text((50, 80), "Numero secret 0612345678", fontsize=12)
+        page.draw_rect(pymupdf.Rect(45, 65, 260, 85), color=None, fill=(0, 0, 0))
+        self.assertTrue(self._report(doc)["hidden_text"])
+
+    def test_text_under_a_pasted_image_is_detected(self):
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text((50, 80), "Numero secret 0612345678", fontsize=12)
+        black = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 10, 10), False)
+        black.clear_with(0)
+        page.insert_image(pymupdf.Rect(45, 65, 260, 85), pixmap=black)
+        self.assertTrue(self._report(doc)["hidden_text"])
+
+    def test_ocr_text_under_a_scanned_page_is_invisible_not_hidden(self):
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text((50, 80), "Texte reconnu du scan", fontsize=12)
+        scan = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 10, 10), False)
+        scan.clear_with(255)
+        page.insert_image(page.rect, pixmap=scan)  # the scan drawn over its OCR text
+        report = self._report(doc)
+        self.assertEqual(report["hidden_text"], [])
+        self.assertGreater(report["invisible_text_chars"], 0)
+
+    def test_transparent_image_over_text_is_not_a_finding(self):
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text((50, 80), "Texte sous un tampon", fontsize=12)
+        stamp = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 10, 10), True)
+        stamp.clear_with(0)  # fully transparent
+        page.insert_image(pymupdf.Rect(45, 65, 260, 85), pixmap=stamp)
+        self.assertEqual(self._report(doc)["hidden_text"], [])
+
+    def test_background_drawn_before_the_text_is_not_a_finding(self):
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.draw_rect(pymupdf.Rect(45, 65, 260, 85), color=None, fill=(0.9, 0.9, 1))  # a cell background
+        page.insert_text((50, 80), "Texte normal", fontsize=12)
+        self.assertEqual(self._report(doc)["hidden_text"], [])
+
+    def test_real_redaction_leaves_nothing_to_find(self):
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text((50, 80), "Numero secret 0612345678", fontsize=12)
+        _meta, out = pdf_engine.worker_redact(doc.tobytes(), 0, [(45, 65, 260, 85)])
+        self.assertEqual(self._report(pymupdf.open(stream=out))["hidden_text"], [])
+
+    def test_unapplied_redaction_marks_and_metadata_are_reported(self):
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text((50, 80), "A masquer", fontsize=12)
+        page.add_redact_annot(pymupdf.Rect(45, 65, 160, 85), fill=(0, 0, 0))  # marked, never applied
+        doc.set_metadata({"author": "Jean Dupont"})
+        report = self._report(doc)
+        self.assertEqual(report["unapplied_redactions"], 1)
+        self.assertEqual(report["metadata"].get("author"), "Jean Dupont")
+
+    def test_earlier_versions_from_incremental_saves_are_counted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "doc.pdf"
+            doc = pymupdf.open()
+            doc.new_page().insert_text((50, 80), "Version 1", fontsize=12)
+            doc.save(path)
+            doc = pymupdf.open(path)
+            doc[0].insert_text((50, 120), "Version 2", fontsize=12)
+            doc.saveIncr()
+            meta, _ = pdf_engine.worker_inspect(path.read_bytes())
+        self.assertGreaterEqual(meta["versions"], 2)
+
+    def test_coordinates_must_be_finite(self):
+        from pydantic import ValidationError
+
+        from app.schemas import RedactRequest
+
+        with self.assertRaises(ValidationError):
+            RedactRequest(rects=[(0, 0, float("nan"), 10)])
+
+
+class ReplaceTests(unittest.TestCase):
+    """Find & replace is a series of ordinary line edits: the old text is
+    really gone, untouched lines stay untouched."""
+
+    def _doc(self, pages: list[list[str]]) -> bytes:
+        doc = pymupdf.open()
+        for lines in pages:
+            page = doc.new_page()
+            for i, text in enumerate(lines):
+                page.insert_text((50, 80 + i * 24), text, fontsize=12)
+        return doc.tobytes()
+
+    def _replace_all(self, pdf: bytes, find: str, replacement: str, match_case=False, whole_word=False) -> tuple[bytes, int]:
+        found, _ = pdf_engine.worker_find(pdf, find, match_case, whole_word)
+        total = 0
+        for page_index, _count in found["pages"]:
+            meta, pdf = pdf_engine.worker_replace_page(pdf, page_index, find, replacement, match_case, whole_word, 60)
+            total += meta["replaced"]
+        return pdf, total
+
+    def test_replaces_on_every_page_and_removes_the_old_text(self):
+        pdf = self._doc([["Client : Dupont SARL", "Total 1 200"], ["Contact Dupont SARL"], ["Rien ici"]])
+        found, _ = pdf_engine.worker_find(pdf, "dupont", False, False)
+        self.assertEqual(found["pages"], [[0, 1], [1, 1]])
+        out, total = self._replace_all(pdf, "dupont", "Martin")
+        self.assertEqual(total, 2)
+        doc = pymupdf.open(stream=out)
+        self.assertIn("Client : Martin SARL", doc[0].get_text())
+        self.assertIn("Total 1 200", doc[0].get_text())
+        self.assertIn("Contact Martin SARL", doc[1].get_text())
+        self.assertNotIn(b"Dupont", _all_stream_bytes(out))
+
+    def test_replacement_containing_the_search_text_does_not_loop(self):
+        pdf = self._doc([["Dupont et Dupont", "Dupont"]])
+        out, total = self._replace_all(pdf, "Dupont", "Dupont-Martin", match_case=True)
+        self.assertEqual(total, 3)
+        text = pymupdf.open(stream=out)[0].get_text()
+        self.assertEqual(text.count("Dupont-Martin"), 3)
+
+    def test_match_case_and_whole_word(self):
+        search = pdf_engine.compile_search("jean", match_case=False, whole_word=True)
+        self.assertEqual(pdf_engine.replace_in_text("Jean, Jeanne et JEAN", search, "Paul", False), ("Paul, Jeanne et Paul", 2))
+        search = pdf_engine.compile_search("Jean", match_case=True, whole_word=False)
+        self.assertEqual(pdf_engine.replace_in_text("Jean JEAN Jeanne", search, "Paul", True), ("Paul JEAN Paulne", 2))
+
+    def test_ligatures_and_special_spaces_are_found(self):
+        search = pdf_engine.compile_search("le fichier", match_case=False, whole_word=False)
+        self.assertEqual(pdf_engine.replace_in_text("Le ﬁchier", search, "Ce document", False), ("Ce document", 1))
+        # A match that would cut a ligature in half is left alone.
+        search = pdf_engine.compile_search("f", match_case=False, whole_word=False)
+        self.assertEqual(pdf_engine.replace_in_text("ﬁn", search, "X", False), ("ﬁn", 0))
+
+    def test_accents_match_whether_composed_or_not(self):
+        composed = pdf_engine.compile_search("Chère", match_case=False, whole_word=False)
+        self.assertEqual(pdf_engine.replace_in_text("Che\u0300re Adhérente", composed, "Albatard", False), ("Albatard Adhérente", 1))
+        decomposed = pdf_engine.compile_search("Che\u0300re", match_case=False, whole_word=False)
+        self.assertEqual(pdf_engine.replace_in_text("Chère Adhérente", decomposed, "Albatard", False), ("Albatard Adhérente", 1))
+        # "e" must not match the "e" of a decomposed "è" and strip its accent.
+        plain = pdf_engine.compile_search("Che", match_case=False, whole_word=False)
+        self.assertEqual(pdf_engine.replace_in_text("Che\u0300re", plain, "X", False), ("Che\u0300re", 0))
+
+    def test_line_breaks_are_rejected(self):
+        from pydantic import ValidationError
+
+        from app.schemas import ReplaceRequest
+
+        with self.assertRaises(ValidationError):
+            ReplaceRequest(find="a\nb", replace="c")
+        with self.assertRaises(ValidationError):
+            ReplaceRequest(find="a", replace="b\nc")
+        with self.assertRaises(ValidationError):
+            ReplaceRequest(find="", replace="c")
+
+    def test_route_makes_one_undo_step(self):
+        from app import documents, main
+        from app.schemas import ReplaceRequest
+
+        document_id = documents.create(self._doc([["Dupont"], ["Dupont"]]))
+        try:
+            res = main.replace(document_id, ReplaceRequest(find="Dupont", replace="Martin"))
+            self.assertEqual((res.replaced, res.pages, res.truncated), (2, [1, 2], False))
+            self.assertFalse(main.undo(document_id).can_undo)
+        finally:
+            documents.delete(document_id)

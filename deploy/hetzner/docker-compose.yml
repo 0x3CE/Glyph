@@ -1,0 +1,53 @@
+# Glyph backend on a single VPS: the FastAPI backend (backend/Dockerfile)
+# behind Caddy, which terminates HTTPS for API_DOMAIN with an automatic
+# Let's Encrypt certificate. The frontend stays on Vercel and reaches this
+# through BACKEND_URL=https://<API_DOMAIN>. See docs/DEPLOY.md.
+#
+#   cd deploy/hetzner && cp .env.example .env   # then edit .env
+#   docker compose up -d --build
+
+services:
+  backend:
+    build: ../../backend
+    env_file: .env
+    restart: unless-stopped
+    # Not published on the host: only Caddy (same Docker network) reaches it.
+    expose:
+      - "8000"
+    # Everything lives in this one process's memory (documents.py): a single
+    # container, a single uvicorn worker. Hard cap so a runaway can't take the
+    # whole VPS down; sized for SANDBOX_MAX_CONCURRENCY x SANDBOX_MAX_MEMORY_MB
+    # + STORE_MAX_MB + the API itself (see .env.example).
+    mem_limit: ${BACKEND_MEM_LIMIT:-3g}
+    # Sandbox scratch files (fonts extracted from PDFs) go to /dev/shm.
+    shm_size: 128m
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [backend]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      API_DOMAIN: ${API_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  caddy_data: # certificates: keep it, or Let's Encrypt rate limits bite on rebuilds
+  caddy_config:

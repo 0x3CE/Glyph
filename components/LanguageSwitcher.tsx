@@ -8,6 +8,8 @@ interface LanguageSwitcherProps {
   locale: Locale;
   /** The page's path without a locale prefix ("/", "/editor"). */
   path: string;
+  /** Explicit target URL, for pages whose slug differs between languages. */
+  href?: string;
   label: string;
   /** Shown instead of `label` on narrow screens. */
   shortLabel?: string;
@@ -19,11 +21,11 @@ interface LanguageSwitcherProps {
 // the choice, which then beats the country-based guess in proxy.ts on every
 // later visit (otherwise a French visitor clicking "English" would be sent
 // back to French the next time they open `/`).
-export function LanguageSwitcher({ locale, path, label, shortLabel, ariaLabel, className }: LanguageSwitcherProps) {
+export function LanguageSwitcher({ locale, path, href, label, shortLabel, ariaLabel, className }: LanguageSwitcherProps) {
   const target: Locale = locale === "fr" ? "en" : "fr";
   return (
     <a
-      href={localePath(target, path)}
+      href={href ?? localePath(target, path)}
       hrefLang={target}
       lang={target}
       aria-label={ariaLabel}

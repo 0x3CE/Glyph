@@ -223,7 +223,7 @@ La mesure par encre (`_closest_weight_by_ink`, `_find_calibration_text`, `_inter
 
 **Ce qu'on fait** (`_build_formatted_segments`, `_char_span_map`) : avant de réinsérer, on compare (`difflib.SequenceMatcher`) l'ancien texte du bloc et le nouveau texte tapé par l'utilisateur. Les portions **identiques** entre les deux sont associées au span d'origine exact qui les a produites (recoupé aux frontières de span si une portion inchangée traverse plusieurs styles) ; les portions réellement modifiées retombent sur la police "de repli" habituelle (`pick_font` sur le span dominant, comme avant). Chaque portion est réinsérée avec sa propre police, positionnée bout à bout sur la ligne (`apply_block_edit` fait maintenant plusieurs `insert_text` par ligne au lieu d'un seul).
 
-**Pourquoi c'est sûr de réutiliser directement, sans revérifier la couverture de caractères** (`_extract_span_font`, contrairement à `pick_font` qui vérifie toujours `_font_covers_text`) : une portion "identique" au diff est par construction un sous-ensemble exact de texte que CE span a déjà rendu avec succès avant l'édition — sa police le couvre nécessairement déjà, revérifier serait redondant.
+**Raccourci abandonné ensuite (octobre 2026)** : la première version réutilisait la police d'une portion « identique » sans revérifier sa couverture, au motif que ce span avait déjà rendu ce texte. C'était faux. L'original dessine des numéros de glyphes, alors que la réinsertion passe par la table Unicode (cmap) de la police. **Bug réel** : sur un courrier, « Chère Adhérente, » était composé dans un sous-ensemble ArialNarrow sans aucune cmap. L'utilisateur modifiait la fin de la ligne, et le début intact devenait un seul carré `.notdef`, introuvable aussi à la recherche (rechercher-remplacer ne trouvait plus « Chère »). Désormais, chaque portion passe par `pick_font` appliqué à son propre span : la police d'origine si sa cmap couvre le texte, sinon la même famille, dans le style de ce span (un mot en gras reste en gras), avec compensation de largeur. Test : `CmaplessOriginalFontTests`, qui retire la cmap et les noms de glyphes d'une police embarquée, comme dans un vrai sous-ensemble.
 
 **Piège rencontré en implémentant** : plusieurs portions "de repli" (texte réellement modifié) partagent le **même** objet `FontChoice`, donc le même nom de ressource PDF — recalculer `set_simple` indépendamment pour chacune (selon SON propre texte) a réintroduit exactement le bug déjà documenté plus haut ("premier appel gagne pour tout le tag partagé") : un segment tout-Latin-1 enregistrait la ressource partagée en encodage simple, corrompant silencieusement un segment ultérieur contenant un `€` sous ce même nom. Corrigé en décidant `set_simple` **une seule fois** pour l'ensemble du texte de repli, comme avant l'introduction des segments multiples — seules les polices réutilisées par span (toujours un nom de ressource neuf par `_extract_span_font`) peuvent se permettre un calcul par segment sans risque de partage.
 
@@ -373,3 +373,37 @@ Second défaut révélé par ce fichier : ses quatre polices portent toutes le m
 - Un nouveau geste est ignoré tant que le rendu du précédent n'est pas affiché : la page porte encore sa transformation et la mesurer serait faux.
 
 **Vérifié** par simulation (Ctrl + molette sur ordinateur, vrai pincement à deux doigts sur iPhone 13 via le protocole de débogage de Chrome) : la même ligne reste sous le curseur ou les doigts avant et après le zoom, et elle reste cliquable. Reste à confirmer sur un vrai iPhone et dans Safari sur Mac.
+
+## Caviardage, nettoyage et vérificateur : la même promesse que l'édition
+
+**Constat réel** : une fiche de paie « anonymisée » avec des rectangles noirs gardait le nom et le matricule du salarié dans ses mots-clés. Les rectangles, eux, étaient de vrais caviardages. Masquer à l'écran ne suffit pas : il faut retirer du fichier, et pouvoir le vérifier.
+
+**Caviardage** (`pdf_engine/redaction.py`, `redact_areas`) : annotations de caviardage PyMuPDF appliquées aussitôt, avec `images=PDF_REDACT_IMAGE_PIXELS` (on efface les pixels sous la zone, pas l'image entière : un logo à côté d'un nom survit), `graphics=PDF_REDACT_LINE_ART_REMOVE_IF_COVERED` (seuls les tracés entièrement couverts partent ; une bordure de tableau qui traverse la zone reste) et `text=PDF_REDACT_TEXT_REMOVE`. Enregistrement avec `garbage=3` : aucun objet orphelin ne garde une copie de ce qui a été supprimé (vérifié par un test qui cherche le texte dans tous les flux décompressés).
+
+**Nettoyage** (`sanitize_document`) : `Document.scrub` avec `reset_fields=False` (ne jamais vider un formulaire rempli) et `remove_links=False` (un lien est du contenu), puis `set_metadata({})` et un enregistrement complet (`garbage=4`, `clean=True`) qui élimine les versions précédentes d'un fichier enregistré par ajout. `redactions=True` applique les caviardages marqués par un autre logiciel mais jamais appliqués : leur intention était claire. `redact_images=0` est voulu : `hidden_text=True` pose des zones sur la couche OCR d'un scan, et effacer les pixels dessous effacerait le scan lui-même.
+
+**Vérificateur** (`inspect_document`) : la question est « ce texte est-il recouvert par quelque chose dessiné **après** lui ? ». `get_texttrace()` et `get_drawings()` donnent un `seqno` (ordre de dessin) commun ; `get_bboxlog()` liste tout dans ce même ordre, ce qui permet d'y ajouter les images (son index est le `seqno`, vérifié). Un fond de cellule dessiné avant le texte n'est donc pas un faux positif. Seuil : 60 % de la boîte du texte couverte. Exclusions : les images avec masque de transparence (un tampon laisse voir le texte) ; une image de la taille de la page (80 %) dessinée par-dessus du texte est un scan, et ce texte est sa couche OCR : compté comme invisible, pas comme caché.
+
+**Limites assumées** : pas de détection d'un rectangle posé sur un scan (le texte est en pixels), d'un texte de la couleur du fond, ni d'un texte hors de la page. Elles sont écrites sur la page du vérificateur.
+
+## Rechercher-remplacer : une suite d'éditions de ligne, une sandbox par page
+
+**Pourquoi pas un moteur à part** : chaque ligne trouvée passe par `apply_block_edit`, exactement comme une édition manuelle. On hérite de tout ce qui a été réglé (police d'origine ou la plus proche, mise en forme des mots non touchés, voisins jamais empiétés) et de la garantie que l'ancien texte quitte le fichier.
+
+**Boucle infinie** (`replace_on_page`) : les lignes cibles sont listées une fois, au départ (position, texte actuel, nouveau texte). Chacune est ensuite retrouvée dans une extraction fraîche, par texte identique et position à 2 points près, juste avant son édition : une édition peut renuméroter les lignes de la page. Remplacer « Dupont » par « Dupont-Martin » ne repasse donc jamais sur une ligne déjà traitée.
+
+**Ligatures** : beaucoup de PDF stockent « fichier » avec la ligature « ﬁ ». La recherche se fait sur le texte normalisé NFKC (et `casefold` sans « respecter la casse »), avec une table qui ramène chaque caractère normalisé à son caractère d'origine. Une occurrence qui commencerait ou finirait au milieu d'une ligature est ignorée plutôt que de casser les lettres voisines.
+
+**Budget CPU** : la sandbox coupe à 8 s de CPU, et le serveur Render est lent. La route lance donc une exécution pour trouver les pages, puis une par page (60 lignes au plus), et n'empile qu'une version à la fin : **un seul Annuler** défait tout le remplacement. Plafond de 300 lignes par requête, signalé par `truncated`.
+
+**Résultats validés** : les deux workers renvoient du JSON qui sort d'un processus ayant lu un PDF non fiable ; il passe par `_validated` (`FindResult`, `PageReplaceResult`) avant usage, comme le reste.
+
+## Pages de contenu : peu de pages, toutes utiles
+
+**Contexte** : le site ne remontait pas sur Google. La force de Glyph (« modifier réellement, pas par-dessus ») se cherche avec des requêtes précises : modifier le texte d'un PDF, caviarder, anonymiser, remplacer un mot, signer.
+
+**Ce qu'on fait** : une page par outil réel, trois guides et un article, chacun en français et en anglais avec un slug traduit et des `hreflang` croisés. Pas de pages générées en masse (« modifier un PDF à Lyon »…) : Google les traite comme des pages satellites. Chaque page d'outil ouvre l'éditeur directement sur l'outil (`lib/pending-upload.ts`), dit honnêtement où va le fichier (serveur, en mémoire, supprimé) et liste les vraies limites.
+
+**Usage responsable** : les pages qui touchent à des documents sensibles renvoient aux conditions d'utilisation (faux et usage de faux interdits). La page « Signer » précise qu'il s'agit d'une signature manuscrite apposée, pas d'une signature électronique eIDAS.
+
+**Contenu en TypeScript, pas en Markdown** : les deux langues ont la même structure, vérifiée par le typecheck, et un lien interne vise un identifiant de page (`@redact`), pas une URL : il suit le bon slug dans chaque langue et se désactive tant que la page cible n'est pas publiée.

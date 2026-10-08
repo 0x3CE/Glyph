@@ -96,7 +96,12 @@ Le processus API ne lit jamais un PDF lui-même : il transmet les octets à un s
 | `lib/i18n/` | Dictionnaires `fr.ts` / `en.ts`, configuration des langues, balises `hreflang` |
 | `app/[lang]/page.tsx` | Landing page, générée en français et en anglais (SEO, FAQ, Buy Me a Coffee) |
 | `app/[lang]/editor/page.tsx` + `components/EditorApp.tsx` | Écran d'édition : upload, pages, undo/redo, signature, téléchargement |
-| `components/PdfPage.tsx` | Rendu pdf.js, zones cliquables, zone de saisie |
+| `components/PdfPage.tsx` | Rendu pdf.js, zones cliquables, zone de saisie, mode caviardage (lignes ou zones dessinées) |
+| `components/ReplaceModal.tsx` | Fenêtre « Rechercher et remplacer » (menu Outils) |
+| `lib/seo/registry.ts`, `lib/seo/content/` | Pages de contenu : identifiants, type (outil, guide, article), slugs par langue, et leur texte |
+| `app/[lang]/[slug]/page.tsx` + `components/SeoPage.tsx` | Rendu d'une page de contenu : hero, widget (dépôt de fichier ou vérificateur), sections, FAQ, JSON-LD |
+| `components/UploadDropzone.tsx`, `lib/pending-upload.ts` | Dépôt sur une page de contenu : le fichier est passé à l'éditeur, qui ouvre l'outil voulu (caviardage, signature, remplacer) |
+| `components/PdfChecker.tsx` | Le vérificateur de PDF caviardé et son rapport |
 | `components/SignatureModal.tsx`, `SignaturePlacer.tsx` | Capture puis placement de la signature |
 | `lib/api-client.ts` | Tous les appels au backend, typés |
 | `lib/brand.ts` | Le logo : un « G » en Rozha One (OFL) converti en tracés, source unique de l'en-tête, de l'icône iPhone et de l'image de partage ; `app/icon.svg` en reprend le tracé |
@@ -121,6 +126,8 @@ Le site existe en français et en anglais, avec des URL distinctes pour que les 
 Une URL `/en/...` explicite est toujours servie telle quelle, et `/fr/...` redirige (308) vers la même page sans préfixe, pour éviter le contenu dupliqué. Pour tester en local : `curl -H 'x-vercel-ip-country: US' localhost:3000/`.
 
 **Textes** : tout est dans `lib/i18n/fr.ts` et `lib/i18n/en.ts`. Le type du dictionnaire français sert de modèle : une clé manquante dans la version anglaise fait échouer le typecheck. Les composants serveur appellent `getDictionary(lang)`, les composants client de l'éditeur `useI18n()`. Seule la langue traverse la frontière serveur → client, ce qui permet aux dictionnaires de contenir des fonctions (`downloadName`).
+
+**Pages de contenu** : une page par outil (modifier le texte, caviarder, anonymiser, vérifier, remplacer, signer), trois guides, un article et les conditions d'utilisation, chacune avec un slug traduit (`/caviarder-pdf` ↔ `/en/redact-pdf`). Le registre (`lib/seo/registry.ts`) liste toutes les pages prévues ; seules celles dont le contenu est déclaré dans `lib/seo/content/index.ts` sont publiées (route, sitemap, liens). Un lien vers une page non publiée s'affiche en texte simple. La redirection par pays traduit aussi le slug (`translateFrenchPath`). Le texte des pages accepte un mini-balisage : `**gras**`, `[libellé](@idDePage)`, `[libellé](/chemin)` ou un lien externe.
 
 **Référencement** : chaque page déclare son URL canonique et ses équivalents (`hreflang`, avec `x-default` vers l'anglais), le sitemap liste les deux versions, et l'image de partage existe dans les deux langues.
 
@@ -207,7 +214,7 @@ Tout PDF uploadé est traité comme hostile : MuPDF est une bibliothèque C avec
 
 ## API backend
 
-Toutes les routes sont sous `/api/documents`, sans authentification : le `document_id` (UUID4, 122 bits aléatoires) sert de clé d'accès. La référence complète, avec les exemples de réponses, est dans [`API.md`](./API.md).
+Toutes les routes sont sous `/api/documents` (sauf `/api/inspect`), sans authentification : le `document_id` (UUID4, 122 bits aléatoires) sert de clé d'accès. La référence complète, avec les exemples de réponses, est dans [`API.md`](./API.md).
 
 | Route | Corps | Réponse |
 | --- | --- | --- |
@@ -216,6 +223,10 @@ Toutes les routes sont sous `/api/documents`, sans authentification : le `docume
 | `GET /{id}/pages/{n}/structure` | — | Taille de la page et blocs (bbox, texte, spans avec police, taille, couleur, drapeaux) |
 | `POST /{id}/pages/{n}/blocks/{bloc}/edit` | JSON `{"text": "…"}`, 5000 caractères au plus | `font_substituted`, `new_bbox` |
 | `POST /{id}/pages/{n}/signature?x0=&y0=&x1=&y1=` | Octets bruts (PDF, PNG ou JPEG) | `bbox` |
+| `POST /{id}/pages/{n}/redact` | JSON `{"rects": [[x0, y0, x1, y1], …]}` | `redacted` |
+| `POST /{id}/sanitize` | — | `removed` (clés traduites par le frontend) |
+| `POST /{id}/replace` | JSON `{"find", "replace", "match_case", "whole_word"}` | `replaced`, `lines`, `pages`, `truncated`, `font_substituted` |
+| `POST /api/inspect` (hors `/documents`) | Octets bruts du PDF, non conservé | Rapport : texte caché, caviardages non appliqués, texte invisible, métadonnées, versions, pièces jointes |
 | `POST /{id}/undo`, `POST /{id}/redo` | — | `cursor`, `can_undo`, `can_redo` |
 | `DELETE /{id}` | — | `{"ok": true}`, même si le document n'existe plus |
 
@@ -300,6 +311,8 @@ Les six points de priorité basse de l'audit de sécurité d'octobre 2026 resten
 
 - édition ligne par ligne : une adresse sur trois lignes demande trois clics ;
 - la redaction efface aussi un fond coloré de cellule ;
+- rechercher-remplacer ne trouve pas une expression coupée par un retour à la ligne, et ignore les lignes au texte illisible ;
+- le vérificateur ne voit ni un rectangle posé sur un scan, ni un texte de la couleur du fond, ni un texte hors de la page ;
 - seules les graisses Regular et Bold sont fournies : un Light ou un SemiBold prend la plus proche, avec compensation de largeur ;
 - pas de mise en forme avancée du texte (HarfBuzz), ni d'écriture de droite à gauche ou CJK, ni de rotation de page ;
 - chaque édition embarque sa propre copie de police dans le PDF (voir « Un nom de ressource police unique par édition » dans `DECISIONS.md`) ;
