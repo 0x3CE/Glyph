@@ -161,6 +161,10 @@ export const en: Dictionary = {
     download: "Download",
     downloadName: (fileName: string) => `edited-${fileName}`,
     defaultDownloadName: "edited-document.pdf",
+    tooManyDocumentsTitle: "10 documents maximum",
+    tooManyDocuments:
+      "You already have 10 documents open in Glyph. Close a Glyph tab, or wait a few minutes, then try again.",
+    gotIt: "Got it",
     loadError: "Couldn't open this PDF. The file may be corrupted or password-protected.",
     substitutionNotice: "The original font isn't available for this text — a replacement font was used.",
     dropTitle: "Drop a PDF here",

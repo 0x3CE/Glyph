@@ -606,6 +606,16 @@ a {
   color: var(--danger);
 }
 
+.limit-modal {
+  max-width: 420px;
+}
+
+.limit-modal p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
 /* ---------- Find & replace ---------- */
 
 .field {

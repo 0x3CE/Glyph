@@ -59,6 +59,9 @@ Both sides read a few optional environment variables — useful once you deploy 
 | `DOCUMENT_TTL_MINUTES` | backend | `30` | An open document nobody touched for this long is deleted. |
 | `DOCUMENT_MAX_MB` | backend | `60` | Per-document cap on its undo history; the oldest undo states are dropped first. |
 | `STORE_MAX_MB` / `MAX_DOCUMENTS` | backend | `200` / `200` | Caps on everything held in memory; past them, new uploads/edits get a `503` instead of evicting someone else's document. |
+| `MAX_CONCURRENT_UPLOADS` | backend | `4` | Upload-type requests (upload, checker, signature) processed at once, since each body is held in memory; others wait up to 10 s, then get a `503`. |
+| `ENABLE_API_DOCS` | backend | unset | Set to `1` to serve FastAPI's `/docs` and `/openapi.json` (local development). Off by default, so off in production. |
+| `MAX_DOCUMENTS_PER_OWNER` | backend | `10` | Documents one visitor (one IP, taken from the left-most `X-Forwarded-For` entry that Vercel sets) can have open at once; past it, uploads get a `429`. Only an HMAC of the IP, keyed at startup, is kept in memory. |
 | `NEXT_PUBLIC_SITE_URL` | frontend | Vercel production URL | Public origin used for canonical URLs, hreflang, Open Graph images, sitemap and robots.txt (`lib/site.ts`). Set it once a custom domain is attached; without it, Vercel's production domain (`VERCEL_PROJECT_PRODUCTION_URL`) is used, and `http://localhost:3000` outside Vercel. |
 
 ## Deployment
@@ -125,7 +128,7 @@ backend/        # FastAPI + PyMuPDF (the actual editing engine)
 - **Colored backgrounds**: redaction clears everything in the edited area, including any vector fill behind the text. Not an issue for typical text blocks (names, dates, paragraphs), but worth knowing if you're editing colored table cells.
 - **Password-protected PDFs** are rejected at upload with a clear error — not supported.
 - No advanced text shaping (HarfBuzz), no RTL/CJK support, no page rotation — out of scope for now. Free text, form fields, shapes, and OCR aren't implemented yet.
-- **Find and replace** works line by line too: a phrase broken across two lines isn't found, and lines with an unreadable text layer are skipped. One run edits at most 300 lines (60 per page, each page in its own sandbox run), over the first 300 pages.
+- **Find and replace** works line by line too: a phrase broken across two lines isn't found, and lines with an unreadable text layer are skipped. One run edits at most 20 pages and 300 lines (60 per page, each page in its own sandbox run), over the first 300 pages; the response says `truncated` when there's more.
 - **The checker** can't see a box drawn over a scan (the scan's text is pixels), text the same color as its background, or text placed outside the page; it reads the first 300 pages. Text drawn under a page-sized image is reported as invisible (an OCR layer), not as hidden.
 - `backend/tests/` covers the block-detection and redaction-safety invariants (`python -m unittest discover -s tests -v`); `backend/smoke_test.py` remains a manual, ad hoc script on top of that, not part of CI.
 

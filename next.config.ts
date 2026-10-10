@@ -7,6 +7,13 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.join(__dirname),
   },
+  // Where some bots and older tools look for these two files.
+  async redirects() {
+    return [
+      { source: "/security.txt", destination: "/.well-known/security.txt", permanent: true },
+      { source: "/en/favicon.ico", destination: "/favicon.ico", permanent: true },
+    ];
+  },
   async rewrites() {
     return [
       {

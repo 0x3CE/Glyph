@@ -166,6 +166,10 @@ export const fr = {
     downloadName: (fileName: string) => `modifie-${fileName}`,
     defaultDownloadName: "document-modifie.pdf",
     loadError: "Impossible de charger ce PDF. Le fichier est peut-être corrompu ou protégé.",
+    tooManyDocumentsTitle: "10 documents maximum",
+    tooManyDocuments:
+      "Tu as déjà 10 documents ouverts dans Glyph. Ferme un onglet Glyph, ou attends quelques minutes, puis réessaie.",
+    gotIt: "Compris",
     substitutionNotice: "Police d'origine indisponible pour ce texte — une police de remplacement a été utilisée.",
     dropTitle: "Glisse un PDF ici",
     dropOr: "ou",

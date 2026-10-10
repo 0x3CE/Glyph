@@ -138,6 +138,23 @@ class DocumentStoreTests(unittest.TestCase):
             with self.assertRaises(documents.StoreFullError):
                 documents.create(b"c")
 
+    def test_one_owner_can_have_at_most_ten_documents_open(self):
+        self.assertEqual(documents.MAX_DOCUMENTS_PER_OWNER, 10)
+        ids = [documents.create(b"pdf", owner="alice") for _ in range(10)]
+        with self.assertRaises(documents.TooManyDocumentsError):
+            documents.create(b"pdf", owner="alice")
+        documents.create(b"pdf", owner="bob")  # someone else isn't affected
+        documents.delete(ids[0])  # closing a tab frees a slot
+        documents.create(b"pdf", owner="alice")
+
+    def test_expired_documents_free_their_owner_slots(self):
+        with mock.patch.object(documents, "MAX_DOCUMENTS_PER_OWNER", 1):
+            with mock.patch.object(documents.time, "monotonic", return_value=1000.0):
+                documents.create(b"pdf", owner="alice")
+            later = 1000.0 + documents.DOCUMENT_TTL_SECONDS + 1
+            with mock.patch.object(documents.time, "monotonic", return_value=later):
+                documents.create(b"pdf", owner="alice")
+
     def test_edit_gives_up_own_undo_history_before_refusing(self):
         with mock.patch.object(documents, "STORE_MAX_BYTES", 35):
             doc = documents.create(b"a" * 10)
@@ -152,6 +169,76 @@ class DocumentStoreTests(unittest.TestCase):
         doc = documents.create(b"a")
         documents.delete(doc)
         self.assertFalse(documents.push(doc, b"b"))
+
+
+class ClientKeyTests(unittest.TestCase):
+    """The quota's notion of "one visitor"."""
+
+    def _request(self, headers: dict[str, str], host: str = "10.0.0.1"):
+        from starlette.requests import Request
+
+        raw = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
+        return Request({"type": "http", "headers": raw, "client": (host, 1234)})
+
+    def test_visitor_is_the_left_most_forwarded_address(self):
+        from app.main import _client_key
+
+        # Vercel writes the visitor's IP; Render appends its own hop.
+        a = _client_key(self._request({"X-Forwarded-For": "203.0.113.7, 76.76.21.1"}))
+        b = _client_key(self._request({"X-Forwarded-For": "203.0.113.7, 76.76.21.9"}))
+        c = _client_key(self._request({"X-Forwarded-For": "198.51.100.2, 76.76.21.1"}))
+        self.assertEqual(a, b)
+        self.assertNotEqual(a, c)
+
+    def test_the_ip_itself_is_never_stored(self):
+        from app.main import _client_key
+
+        key = _client_key(self._request({"X-Forwarded-For": "203.0.113.7"}))
+        self.assertNotIn("203.0.113.7", key)
+        self.assertEqual(len(key), 64)
+
+
+class ApiGuardTests(unittest.TestCase):
+    def test_signature_rectangle_must_be_finite_sane_and_not_inverted(self):
+        from app.main import _valid_rect
+
+        self.assertTrue(_valid_rect((100, 400, 300, 460)))
+        for bad in [
+            (float("nan"), 0, 100, 100),
+            (0, 0, float("inf"), 100),
+            (0, 0, 1e300, 100),
+            (300, 400, 100, 460),  # inverted
+            (100, 400, 100, 460),  # empty
+        ]:
+            self.assertFalse(_valid_rect(bad), bad)
+
+    def test_api_docs_are_off_by_default(self):
+        from app import main
+
+        if os.environ.get("ENABLE_API_DOCS") == "1":
+            self.skipTest("docs explicitly enabled in this environment")
+        self.assertIsNone(main.app.docs_url)
+        self.assertIsNone(main.app.openapi_url)
+
+    def test_uploads_past_the_concurrency_cap_get_a_503(self):
+        import asyncio
+
+        from fastapi import HTTPException
+
+        from app import main
+
+        async def scenario():
+            with mock.patch.object(main, "_UPLOAD_SLOTS", asyncio.Semaphore(1)), \
+                 mock.patch.object(main, "UPLOAD_QUEUE_TIMEOUT_SECONDS", 0.05):
+                async with main._upload_slot():
+                    with self.assertRaises(HTTPException) as ctx:
+                        async with main._upload_slot():
+                            pass
+                    self.assertEqual(ctx.exception.status_code, 503)
+                async with main._upload_slot():  # released: free again
+                    pass
+
+        asyncio.run(scenario())
 
 
 if __name__ == "__main__":

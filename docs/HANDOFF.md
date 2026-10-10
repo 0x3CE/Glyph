@@ -235,6 +235,7 @@ Toutes les routes sont sous `/api/documents` (sauf `/api/inspect`), sans authent
 - `400` : fichier invalide ou protégé par mot de passe ;
 - `404` : document expiré, page ou bloc introuvable ;
 - `413` : fichier trop gros ;
+- `429` : ce visiteur a déjà 10 documents ouverts (`MAX_DOCUMENTS_PER_OWNER`) ;
 - `422` : traitement échoué dans la sandbox ;
 - `503` : serveur à pleine capacité, à réessayer.
 
@@ -260,6 +261,9 @@ Le chemin testé : backend sur Render (Docker, via `render.yaml`), frontend sur 
 | `DOCUMENT_TTL_MINUTES` | backend | 30 | Inactivité avant suppression |
 | `DOCUMENT_MAX_MB` | backend | 60 | Historique max d'un document |
 | `STORE_MAX_MB` / `MAX_DOCUMENTS` | backend | 200 / 200 | Plafonds de la mémoire totale |
+| `MAX_CONCURRENT_UPLOADS` | backend | 4 | Envois (upload, vérificateur, signature) traités en même temps ; les autres attendent 10 s, puis `503` |
+| `ENABLE_API_DOCS` | backend | absent | `1` pour servir `/docs` et `/openapi.json` en local |
+| `MAX_DOCUMENTS_PER_OWNER` | backend | 10 | Documents ouverts en même temps par visiteur (même IP) ; au-delà, `429` |
 
 Règle de dimensionnement : `SANDBOX_MAX_CONCURRENCY` × `SANDBOX_MAX_MEMORY_MB` + `STORE_MAX_MB` doit tenir dans la RAM de l'instance. Les valeurs par défaut visent 512 Mo à 1 Go.
 
@@ -295,10 +299,10 @@ Les six points de priorité basse de l'audit de sécurité d'octobre 2026 resten
 **Audit de sécurité, priorité basse :**
 
 - [ ] ne plus renvoyer les messages d'erreur internes dans les réponses (`failed to process PDF: {e}`) ;
-- [ ] désactiver `/docs` et `/openapi.json` en production ;
+- [x] désactiver `/docs` et `/openapi.json` en production (`ENABLE_API_DOCS=1` pour les réactiver en local) ;
 - [ ] ajouter les en-têtes de sécurité côté Next : CSP, `frame-ancestors`, `nosniff` ;
 - [ ] servir le PDF téléchargé avec `Content-Disposition: attachment` et `X-Content-Type-Options: nosniff` ;
-- [ ] refuser les coordonnées de signature NaN, infinies ou démesurées ;
+- [x] refuser les coordonnées de signature NaN, infinies ou démesurées ;
 - [ ] figer les versions des dépendances Python (aujourd'hui en `>=`).
 
 **Fonctionnel :**

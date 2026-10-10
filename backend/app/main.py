@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import hmac
 import logging
+import math
 import os
+import secrets
 from contextlib import asynccontextmanager
 from typing import TypeVar
 
@@ -43,9 +48,22 @@ from .schemas import (
 
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "20")) * 1024 * 1024
 MAX_SIGNATURE_BYTES = int(os.environ.get("MAX_SIGNATURE_MB", "5")) * 1024 * 1024
-# Find & replace: lines edited per sandbox run (one page each) and per request.
+# Find & replace: lines edited per sandbox run (one page each) and per
+# request, and pages per request -- each page is one sandbox run (~1 s on a
+# small CPU), so without this one request could hold a sandbox slot for
+# minutes. Past the cap the response says `truncated`: run it again.
 REPLACE_MAX_LINES_PER_PAGE = 60
 REPLACE_MAX_LINES = 300
+REPLACE_MAX_PAGES = 20
+# Request bodies are read whole into memory (see _read_body): at most this
+# many at once, so a burst of large uploads can't exhaust the API's RAM.
+# A request that can't get a slot within UPLOAD_QUEUE_TIMEOUT_SECONDS gets
+# a 503.
+MAX_CONCURRENT_UPLOADS = int(os.environ.get("MAX_CONCURRENT_UPLOADS", "4"))
+UPLOAD_QUEUE_TIMEOUT_SECONDS = 10
+# Signature placement: coordinates must be finite and within this many PDF
+# points (PDF caps page sides at 14,400 pt).
+MAX_COORDINATE = 100_000
 
 # Comma-separated list, e.g. "https://glyph.vercel.app,http://localhost:3000".
 _allowed_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000")
@@ -63,7 +81,17 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="PDF Editor API", lifespan=lifespan)
+# The interactive API docs (/docs, /redoc, /openapi.json) are off unless
+# ENABLE_API_DOCS=1 (local development): in production they'd only map the
+# API out for whoever finds the backend's address.
+_docs = os.environ.get("ENABLE_API_DOCS") == "1"
+app = FastAPI(
+    title="PDF Editor API",
+    lifespan=lifespan,
+    docs_url="/docs" if _docs else None,
+    redoc_url="/redoc" if _docs else None,
+    openapi_url="/openapi.json" if _docs else None,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -85,6 +113,30 @@ def _sandbox_error_to_http(
     if bad_request and e.kind in bad_request:
         return HTTPException(400, bad_request[e.kind])
     return HTTPException(422, f"failed to process PDF: {e}")
+
+
+def _valid_rect(bbox: tuple[float, float, float, float]) -> bool:
+    """Finite (query parameters accept "nan" and "inf"), within the largest
+    possible page, and not empty or inverted."""
+    x0, y0, x1, y1 = bbox
+    return all(math.isfinite(v) and abs(v) <= MAX_COORDINATE for v in bbox) and x1 > x0 and y1 > y0
+
+
+_UPLOAD_SLOTS = asyncio.Semaphore(MAX_CONCURRENT_UPLOADS)
+
+
+@asynccontextmanager
+async def _upload_slot():
+    """Held for a whole upload-type request (body read, processing, storing):
+    the body stays in memory that long."""
+    try:
+        await asyncio.wait_for(_UPLOAD_SLOTS.acquire(), UPLOAD_QUEUE_TIMEOUT_SECONDS)
+    except TimeoutError as e:
+        raise HTTPException(503, "server busy, please retry in a moment") from e
+    try:
+        yield
+    finally:
+        _UPLOAD_SLOTS.release()
 
 
 async def _read_body(request: Request, limit: int, what: str) -> bytes:
@@ -119,6 +171,25 @@ def _validated(model: type[Model], meta: object, **extra: object) -> Model:
         raise HTTPException(422, "failed to process PDF") from e
 
 
+# Key for the per-visitor document quota: an HMAC of the client IP with a
+# key drawn at startup, so the store only ever holds an opaque value -- never
+# the IP itself, and nothing that can be linked back to it after a restart.
+_CLIENT_KEY_SECRET = secrets.token_bytes(32)
+
+
+def _client_key(request: Request) -> str:
+    """Who is making this request, for quotas. In production the API sits
+    behind Vercel (the frontend's /api rewrite), which overwrites
+    X-Forwarded-For with the visitor's real IP (a client can't spoof it
+    there); proxies after it (Render) append their own hop, so the
+    left-most entry is the visitor. A client calling the backend directly
+    could forge the header: closing that door (only Vercel may call the
+    backend) is a separate measure."""
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    ip = forwarded or (request.client.host if request.client else "")
+    return hmac.new(_CLIENT_KEY_SECRET, ip.encode(), hashlib.sha256).hexdigest()
+
+
 def _current_or_404(document_id: str) -> bytes:
     pdf = documents.current(document_id)
     if pdf is None:
@@ -139,6 +210,11 @@ def _push_or_error(document_id: str, new_pdf: bytes | None) -> None:
 
 @app.post("/api/documents", response_model=UploadResponse)
 async def upload(request: Request) -> UploadResponse:
+    async with _upload_slot():
+        return await _upload(request)
+
+
+async def _upload(request: Request) -> UploadResponse:
     raw = await _read_body(request, MAX_UPLOAD_BYTES, "file")
     try:
         meta, _ = await run_in_threadpool(run_isolated, worker_validate_pdf, raw)
@@ -148,7 +224,9 @@ async def upload(request: Request) -> UploadResponse:
         raise HTTPException(400, f"invalid PDF: {e}") from e
     page_count = _validated(UploadResponse, meta, document_id="pending").page_count
     try:
-        document_id = documents.create(raw)
+        document_id = documents.create(raw, owner=_client_key(request))
+    except documents.TooManyDocumentsError as e:
+        raise HTTPException(429, str(e)) from e
     except documents.StoreFullError as e:
         raise HTTPException(503, str(e)) from e
     return UploadResponse(document_id=document_id, page_count=page_count)
@@ -200,11 +278,25 @@ async def add_signature(
     x1: float,
     y1: float,
 ) -> SignatureResponse:
+    bbox = (x0, y0, x1, y1)
+    if not _valid_rect(bbox):
+        raise HTTPException(422, "invalid signature rectangle")
     pdf = _current_or_404(document_id)
+    async with _upload_slot():
+        return await _add_signature(request, document_id, page_index, pdf, bbox)
+
+
+async def _add_signature(
+    request: Request,
+    document_id: str,
+    page_index: int,
+    pdf: bytes,
+    bbox: tuple[float, float, float, float],
+) -> SignatureResponse:
     raw = await _read_body(request, MAX_SIGNATURE_BYTES, "signature file")
     try:
         meta, new_pdf = await run_in_threadpool(
-            run_isolated, worker_add_signature, pdf, page_index, raw, (x0, y0, x1, y1)
+            run_isolated, worker_add_signature, pdf, page_index, raw, bbox
         )
     except SandboxError as e:
         raise _sandbox_error_to_http(
@@ -261,9 +353,9 @@ def replace(document_id: str, body: ReplaceRequest) -> ReplaceResponse:
         replaced = lines = 0
         changed: list[int] = []
         substituted = truncated = False
-        for page_index, _count in found.pages:
+        for done, (page_index, _count) in enumerate(found.pages):
             budget = min(REPLACE_MAX_LINES_PER_PAGE, REPLACE_MAX_LINES - lines)
-            if budget <= 0:
+            if budget <= 0 or done >= REPLACE_MAX_PAGES:
                 truncated = True
                 break
             meta, new_pdf = run_isolated(
@@ -293,6 +385,11 @@ def replace(document_id: str, body: ReplaceRequest) -> ReplaceResponse:
 async def inspect(request: Request) -> InspectReport:
     """Read-only report of what a PDF hides. The file is analysed in the
     sandbox and never stored."""
+    async with _upload_slot():
+        return await _inspect(request)
+
+
+async def _inspect(request: Request) -> InspectReport:
     raw = await _read_body(request, MAX_UPLOAD_BYTES, "file")
     try:
         meta, _ = await run_in_threadpool(run_isolated, worker_inspect, raw)

@@ -9,7 +9,11 @@ memory -- the one process the sandbox exists to keep alive:
   states go first, the current version is always kept);
 - the whole store is capped at STORE_MAX_MB and MAX_DOCUMENTS; past that, new
   uploads/edits are refused (`StoreFullError` -> 503) rather than evicting
-  someone else's document mid-edit.
+  someone else's document mid-edit;
+- one visitor (`owner`, an opaque key derived from their IP by main.py) can
+  have at most MAX_DOCUMENTS_PER_OWNER open at once (`TooManyDocumentsError`
+  -> 429): without it, a single client could fill MAX_DOCUMENTS with tiny
+  PDFs in seconds and lock everyone else out.
 
 Routes run on a threadpool, so every access goes through `_LOCK`.
 """
@@ -26,10 +30,15 @@ DOCUMENT_TTL_SECONDS = int(os.environ.get("DOCUMENT_TTL_MINUTES", "30")) * 60
 DOCUMENT_MAX_BYTES = int(os.environ.get("DOCUMENT_MAX_MB", "60")) * 1024 * 1024
 STORE_MAX_BYTES = int(os.environ.get("STORE_MAX_MB", "200")) * 1024 * 1024
 MAX_DOCUMENTS = int(os.environ.get("MAX_DOCUMENTS", "200"))
+MAX_DOCUMENTS_PER_OWNER = int(os.environ.get("MAX_DOCUMENTS_PER_OWNER", "10"))
 
 
 class StoreFullError(Exception):
     """The store is at capacity; the client should retry later."""
+
+
+class TooManyDocumentsError(Exception):
+    """This owner already has MAX_DOCUMENTS_PER_OWNER documents open."""
 
 
 @dataclass
@@ -37,6 +46,7 @@ class DocumentState:
     history: list[bytes]
     cursor: int  # index into history of the "current" version
     last_access: float = field(default_factory=time.monotonic)
+    owner: str = ""
 
     @property
     def current(self) -> bytes:
@@ -68,14 +78,18 @@ def _purge_expired(now: float) -> None:
         del _STORE[document_id]
 
 
-def create(initial_bytes: bytes) -> str:
+def create(initial_bytes: bytes, owner: str = "") -> str:
     with _LOCK:
         now = time.monotonic()
         _purge_expired(now)
+        if owner and sum(1 for s in _STORE.values() if s.owner == owner) >= MAX_DOCUMENTS_PER_OWNER:
+            raise TooManyDocumentsError(
+                f"too many open documents (max {MAX_DOCUMENTS_PER_OWNER}): close one, or wait for it to expire"
+            )
         if len(_STORE) >= MAX_DOCUMENTS or _total_size() + len(initial_bytes) > STORE_MAX_BYTES:
             raise StoreFullError("server at capacity, please retry later")
         document_id = uuid.uuid4().hex
-        _STORE[document_id] = DocumentState(history=[initial_bytes], cursor=0, last_access=now)
+        _STORE[document_id] = DocumentState(history=[initial_bytes], cursor=0, last_access=now, owner=owner)
         return document_id
 
 

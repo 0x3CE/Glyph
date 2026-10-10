@@ -1,6 +1,6 @@
 # Référence API backend
 
-Base : `http://localhost:8000` en local (le frontend y accède via le proxy Next.js sous `/api/*`, voir [`ARCHITECTURE.md`](./ARCHITECTURE.md)). Doc interactive auto-générée par FastAPI : `http://localhost:8000/docs`.
+Base : `http://localhost:8000` en local (le frontend y accède via le proxy Next.js sous `/api/*`, voir [`ARCHITECTURE.md`](./ARCHITECTURE.md)). Doc interactive auto-générée par FastAPI : `http://localhost:8000/docs`, seulement si le backend est lancé avec `ENABLE_API_DOCS=1` (désactivée par défaut, donc en production).
 
 Aucune authentification. Les documents sont identifiés par un `document_id` opaque (uuid hex) obtenu à l'upload — le connaître suffit à lire/modifier/supprimer le document (pas de contrôle d'accès, cohérent avec l'absence de comptes utilisateurs).
 
@@ -15,9 +15,9 @@ Upload un PDF. Corps : **les octets bruts du fichier** (`Content-Type: applicati
 { "document_id": "34ca6796213f49efb648acc326c472d0", "page_count": 3 }
 ```
 
-`400` si le fichier n'est pas un PDF valide (échec d'ouverture, protégé par mot de passe, ou parsing tué par la sandbox — timeout/mémoire/CPU, voir [`DECISIONS.md`](./DECISIONS.md#isoler-le-parsing-pdf-dans-un-sous-processus)). `413` si le fichier dépasse `MAX_UPLOAD_MB` (20 Mo par défaut). `503` si le serveur est à pleine capacité (mémoire ou sandbox, voir [`DECISIONS.md`](./DECISIONS.md#borner-la-mémoire-et-la-concurrence)) : réessayer plus tard.
+`400` si le fichier n'est pas un PDF valide (échec d'ouverture, protégé par mot de passe, ou parsing tué par la sandbox — timeout/mémoire/CPU, voir [`DECISIONS.md`](./DECISIONS.md#isoler-le-parsing-pdf-dans-un-sous-processus)). `413` si le fichier dépasse `MAX_UPLOAD_MB` (20 Mo par défaut). `429` si ce visiteur (même IP) a déjà `MAX_DOCUMENTS_PER_OWNER` documents ouverts (10 par défaut) : il doit en fermer un ou attendre qu'il expire. `503` si le serveur est à pleine capacité (mémoire ou sandbox, voir [`DECISIONS.md`](./DECISIONS.md#borner-la-mémoire-et-la-concurrence)) : réessayer plus tard.
 
-Toutes les routes ci-dessous peuvent aussi répondre `503` pour la même raison, et `404` pour un document expiré (30 minutes sans activité par défaut, `DOCUMENT_TTL_MINUTES`).
+Les envois (upload, vérificateur, signature) sont traités `MAX_CONCURRENT_UPLOADS` (4) à la fois, car chaque corps est gardé en mémoire ; au-delà de 10 s d'attente, `503`. Toutes les routes ci-dessous peuvent aussi répondre `503` pour la même raison, et `404` pour un document expiré (30 minutes sans activité par défaut, `DOCUMENT_TTL_MINUTES`).
 
 ---
 
@@ -111,7 +111,7 @@ Un PDF source est incrusté en vectoriel (`page.show_pdf_page`, sa première pag
 { "bbox": [100.0, 400.0, 300.0, 460.0] }
 ```
 
-`400` si le fichier n'est ni un PDF, ni une PNG, ni une JPEG reconnaissable, ou si c'est un PDF protégé par mot de passe / sans page. `413` si le fichier dépasse `MAX_SIGNATURE_MB` (5 Mo par défaut). `404` si le document ou la page n'existe pas. `422` si le traitement échoue dans la sandbox (timeout/mémoire/CPU).
+`400` si le fichier n'est ni un PDF, ni une PNG, ni une JPEG reconnaissable, ou si c'est un PDF protégé par mot de passe / sans page. `413` si le fichier dépasse `MAX_SIGNATURE_MB` (5 Mo par défaut). `422` si le rectangle est invalide : coordonnée NaN, infinie ou au-delà de 100 000 points, ou rectangle vide ou inversé. `404` si le document ou la page n'existe pas. `422` si le traitement échoue dans la sandbox (timeout/mémoire/CPU).
 
 ---
 
@@ -163,7 +163,7 @@ Rechercher-remplacer dans tout le document. Corps JSON :
 { "find": "Dupont", "replace": "Martin", "match_case": false, "whole_word": false }
 ```
 
-`find` : 1 à 200 caractères, `replace` : 0 à 200, sans retour à la ligne. La recherche ignore les ligatures et les espaces spéciaux (normalisation NFKC). Chaque ligne trouvée est éditée comme une édition manuelle. Une exécution sandbox cherche les pages concernées, puis une exécution par page fait les éditions (60 lignes au plus par page, 300 par requête). L'ensemble forme **une seule** étape d'historique.
+`find` : 1 à 200 caractères, `replace` : 0 à 200, sans retour à la ligne. La recherche ignore les ligatures et les espaces spéciaux (normalisation NFKC). Chaque ligne trouvée est éditée comme une édition manuelle. Une exécution sandbox cherche les pages concernées, puis une exécution par page fait les éditions (20 pages, 60 lignes par page et 300 lignes au plus par requête). L'ensemble forme **une seule** étape d'historique.
 
 ```json
 // 200

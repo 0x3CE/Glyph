@@ -1,0 +1,7 @@
+# Security contact for Glyph (https://www.glyph-pdf.com), RFC 9116.
+# Please report vulnerabilities privately first, not in a public issue.
+Contact: https://github.com/0x3CE/Glyph/security/advisories/new
+Contact: https://github.com/0x3CE/Glyph/issues
+Expires: 2027-10-10T00:00:00.000Z
+Preferred-Languages: fr, en
+Canonical: https://www.glyph-pdf.com/.well-known/security.txt

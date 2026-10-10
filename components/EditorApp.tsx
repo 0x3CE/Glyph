@@ -55,6 +55,8 @@ export function EditorApp() {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [showReplaceModal, setShowReplaceModal] = useState(false);
+  // The server refused the upload: this visitor already has 10 documents open.
+  const [documentLimitReached, setDocumentLimitReached] = useState(false);
   // Redaction mode: areas picked on the current page, applied together.
   const [redactMode, setRedactMode] = useState(false);
   const [redactTool, setRedactTool] = useState<RedactTool>("lines");
@@ -134,7 +136,9 @@ export function EditorApp() {
       return true;
     } catch (e) {
       console.error(e);
-      setError(t.editor.loadError);
+      // 429: this visitor already has the maximum of documents open.
+      if ((e as Error).message.startsWith("429")) setDocumentLimitReached(true);
+      else setError(t.editor.loadError);
       return false;
     } finally {
       setLoading(false);
@@ -535,6 +539,28 @@ export function EditorApp() {
           </div>
         )}
       </main>
+
+      {documentLimitReached && (
+        <div className="modal-backdrop" onClick={() => setDocumentLimitReached(false)}>
+          <div
+            className="modal limit-modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="limit-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h2 id="limit-title">{t.editor.tooManyDocumentsTitle}</h2>
+            </div>
+            <p>{t.editor.tooManyDocuments}</p>
+            <div className="modal-actions">
+              <button className="btn btn-accent" autoFocus onClick={() => setDocumentLimitReached(false)}>
+                {t.editor.gotIt}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showReplaceModal && documentId && (
         <ReplaceModal

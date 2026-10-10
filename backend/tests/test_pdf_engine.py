@@ -1039,6 +1039,18 @@ class ReplaceTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             ReplaceRequest(find="", replace="c")
 
+    def test_route_stops_after_twenty_pages(self):
+        from app import documents, main
+        from app.schemas import ReplaceRequest
+
+        document_id = documents.create(self._doc([["Dupont"]] * 25))
+        try:
+            res = main.replace(document_id, ReplaceRequest(find="Dupont", replace="Martin"))
+            self.assertEqual(res.pages, list(range(1, 21)))
+            self.assertTrue(res.truncated)
+        finally:
+            documents.delete(document_id)
+
     def test_route_makes_one_undo_step(self):
         from app import documents, main
         from app.schemas import ReplaceRequest
