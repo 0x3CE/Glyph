@@ -8,7 +8,7 @@ export const terms: LocalizedContent = {
       "Les règles d'utilisation de Glyph : modifier uniquement des documents que tu as le droit de modifier, et ce qu'il advient de tes fichiers.",
     h1: "Conditions d'utilisation",
     intro:
-      "Glyph est un projet open source, gratuit et sans compte. En l'utilisant, tu acceptes les règles ci-dessous. Elles sont courtes : lis-les.",
+      "Glyph est un projet open source, publié sous licence [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.html), gratuit et sans compte. En l'utilisant, tu acceptes les règles ci-dessous. Elles sont courtes : lis-les.",
     sections: [
       {
         h2: "Ce que tu peux faire",
@@ -48,12 +48,12 @@ export const terms: LocalizedContent = {
             p: "Glyph est fourni tel quel, gratuitement. Vérifie toujours le document obtenu avant de l'utiliser : le rendu peut différer légèrement de l'original (police de remplacement, fond coloré effacé). Tu restes responsable des documents que tu modifies et de leur usage.",
           },
           {
-            p: "Pour une question ou un problème : [le dépôt GitHub du projet](https://github.com/0x3CE/Glyph).",
+            p: "Le code source complet du site et du serveur est sur [le dépôt GitHub du projet](https://github.com/0x3CE/Glyph), sous licence AGPL-3.0. Pour une question ou un problème, c'est là aussi.",
           },
         ],
       },
     ],
-    updated: "2026-10-08",
+    updated: "2026-10-11",
   },
   en: {
     nav: "Terms of use",
@@ -62,7 +62,7 @@ export const terms: LocalizedContent = {
       "The rules for using Glyph: only edit documents you have the right to edit, and what happens to your files.",
     h1: "Terms of use",
     intro:
-      "Glyph is an open-source project, free and with no account. By using it, you accept the rules below. They're short: read them.",
+      "Glyph is an open-source project, released under the [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.html) license, free and with no account. By using it, you accept the rules below. They're short: read them.",
     sections: [
       {
         h2: "What you can do",
@@ -102,11 +102,11 @@ export const terms: LocalizedContent = {
             p: "Glyph is provided as is, for free. Always check the resulting document before using it: it may differ slightly from the original (replacement font, erased colored background). You remain responsible for the documents you edit and how you use them.",
           },
           {
-            p: "For questions or issues: [the project's GitHub repository](https://github.com/0x3CE/Glyph).",
+            p: "The full source code of the website and the server is in [the project's GitHub repository](https://github.com/0x3CE/Glyph), under the AGPL-3.0 license. Questions and issues go there too.",
           },
         ],
       },
     ],
-    updated: "2026-10-08",
+    updated: "2026-10-11",
   },
 };

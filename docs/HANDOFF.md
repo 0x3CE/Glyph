@@ -6,7 +6,7 @@ Dernière mise à jour : octobre 2026.
 
 ## Vue d'ensemble
 
-Glyph est un éditeur PDF open source (licence MIT) qui modifie vraiment le texte d'un PDF. Les glyphes d'origine sont supprimés du flux du document par redaction PyMuPDF, puis le nouveau texte est réinséré à la même position. Les éditeurs classiques posent un rectangle blanc par-dessus et écrivent au-dessus, ce qui laisse l'ancien texte cherchable et copiable dessous.
+Glyph est un éditeur PDF open source (licence AGPL-3.0, comme PyMuPDF sur lequel il repose) qui modifie vraiment le texte d'un PDF. Les glyphes d'origine sont supprimés du flux du document par redaction PyMuPDF, puis le nouveau texte est réinséré à la même position. Les éditeurs classiques posent un rectangle blanc par-dessus et écrivent au-dessus, ce qui laisse l'ancien texte cherchable et copiable dessous.
 
 Le projet tient en deux services :
 

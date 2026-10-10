@@ -136,6 +136,7 @@ export const fr = {
     tools: "Outils",
     guides: "Guides et articles",
     about: "À propos",
+    sourceCode: "Code source (AGPL-3.0)",
   },
   seo: {
     home: "Accueil",

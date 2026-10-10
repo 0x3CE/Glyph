@@ -138,4 +138,8 @@ Issues and pull requests are welcome. If you're planning a non-trivial change to
 
 ## License
 
-[MIT](./LICENSE)
+Glyph is free software, released under the [GNU Affero General Public License v3.0](./LICENSE) (AGPL-3.0-only). Copyright © 2026 Glyph contributors.
+
+In short: you can use, study, modify and redistribute it. If you distribute a modified version, **or run one as a network service** (a hosted website, say), you must make its complete source code available to its users under the same license. That matches PyMuPDF, the PDF engine Glyph is built on, which is AGPL-licensed itself.
+
+Versions published before this change remain available under the MIT license they were released with. The bundled fonts keep their own licenses (SIL Open Font License, Apache, GPL with font exception…), shipped next to them in `backend/app/fonts/`.

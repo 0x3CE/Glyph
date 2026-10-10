@@ -606,6 +606,11 @@ a {
   color: var(--danger);
 }
 
+.source-link {
+  margin-top: -8px;
+  text-underline-offset: 3px;
+}
+
 .limit-modal {
   max-width: 420px;
 }

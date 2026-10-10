@@ -18,6 +18,10 @@ function resolveSiteUrl(): string {
 
 export const SITE_URL = resolveSiteUrl();
 
+// The source code, linked from the footer and the editor: the AGPL asks a
+// network service to offer its source to the people using it.
+export const SOURCE_CODE_URL = "https://github.com/0x3CE/Glyph";
+
 /** Absolute URL of a public path. The root is written without a trailing
  * slash, exactly like Next renders canonical URLs, so the sitemap and the
  * page's own tags agree. */

@@ -6,6 +6,7 @@ import type { Locale } from "@/lib/i18n";
 import { CONTENT, isPublished } from "@/lib/seo/content";
 import { PAGE_IDS, PAGES, pagePath } from "@/lib/seo/registry";
 import type { PageId } from "@/lib/seo/registry";
+import { SOURCE_CODE_URL } from "@/lib/site";
 
 // Plain link, not Buy Me a Coffee's widget script: the site promises no
 // third-party tracking, and the widget would load one on every visit.
@@ -57,7 +58,14 @@ export function SiteHeader({ locale, path = "/", otherHref }: ChromeProps) {
   );
 }
 
-function linksOfKind(locale: Locale, kinds: string[]): { id: PageId; href: string; label: string }[] {
+interface FooterLink {
+  id: string;
+  href: string;
+  label: string;
+  external?: boolean;
+}
+
+function linksOfKind(locale: Locale, kinds: string[]): FooterLink[] {
   return PAGE_IDS.filter((id) => isPublished(id) && kinds.includes(PAGES[id].kind)).map((id) => ({
     id,
     href: pagePath(id, locale),
@@ -70,7 +78,13 @@ export function SiteFooter({ locale, path = "/", otherHref }: ChromeProps) {
   const groups = [
     { title: t.footer.tools, links: linksOfKind(locale, ["tool"]) },
     { title: t.footer.guides, links: linksOfKind(locale, ["article", "guide"]) },
-    { title: t.footer.about, links: linksOfKind(locale, ["legal"]) },
+    {
+      title: t.footer.about,
+      links: [
+        ...linksOfKind(locale, ["legal"]),
+        { id: "source", href: SOURCE_CODE_URL, label: t.footer.sourceCode, external: true },
+      ],
+    },
   ].filter((g) => g.links.length > 0);
   return (
     <footer className="site-footer-wrap">
@@ -82,7 +96,13 @@ export function SiteFooter({ locale, path = "/", otherHref }: ChromeProps) {
               <ul>
                 {group.links.map((link) => (
                   <li key={link.id}>
-                    <Link href={link.href}>{link.label}</Link>
+                    {link.external ? (
+                      <a href={link.href} target="_blank" rel="noopener noreferrer">
+                        {link.label}
+                      </a>
+                    ) : (
+                      <Link href={link.href}>{link.label}</Link>
+                    )}
                   </li>
                 ))}
               </ul>

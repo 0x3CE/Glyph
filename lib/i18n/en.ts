@@ -133,6 +133,7 @@ export const en: Dictionary = {
     tools: "Tools",
     guides: "Guides and articles",
     about: "About",
+    sourceCode: "Source code (AGPL-3.0)",
   },
   seo: {
     home: "Home",
