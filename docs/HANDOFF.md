@@ -92,7 +92,7 @@ Le processus API ne lit jamais un PDF lui-même : il transmet les octets à un s
 
 | Fichier | Rôle |
 | --- | --- |
-| `proxy.ts` | Choix de la langue : préfixe `/en`, pays à la première visite, cookie. Ne touche pas à `/api`, `/_next` ni `/_vercel` (Web Analytics et Speed Insights y envoient leurs mesures) |
+| `proxy.ts` | Choix de la langue : préfixe `/en`, pays à la première visite, cookie. Ne touche pas à `/api`, `/_next` ni `/_vercel` (Web Analytics et Speed Insights y envoient leurs mesures), ni aux pages anglaises `/en/...`, servies directement depuis le cache de Vercel (deux tiers du public est aux États-Unis : ça leur évite une fonction à chaque page) |
 | `lib/i18n/` | Dictionnaires `fr.ts` / `en.ts`, configuration des langues, balises `hreflang` |
 | `app/[lang]/page.tsx` | Landing page, générée en français et en anglais (SEO, FAQ, Buy Me a Coffee) |
 | `app/[lang]/editor/page.tsx` + `components/EditorApp.tsx` | Écran d'édition : upload, pages, undo/redo, signature, téléchargement |
@@ -243,7 +243,7 @@ Toutes les routes sont sous `/api/documents` (sauf `/api/inspect`), sans authent
 
 ## Configuration et déploiement
 
-Le chemin testé : backend sur Render (Docker, via `render.yaml`), frontend sur Vercel (Next.js sans réglage). Les deux se référencent : il faut une première mise en ligne de chaque côté, puis renseigner l'URL de l'autre.
+Le chemin testé : backend sur Render (Docker, via `render.yaml`), frontend sur Vercel (Next.js sans réglage). Le passage du backend sur un VPS à soi (Hetzner, Docker, Caddy, `api.glyph-pdf.com`) est décrit pas à pas dans [`DEPLOY.md`](./DEPLOY.md). Les deux se référencent : il faut une première mise en ligne de chaque côté, puis renseigner l'URL de l'autre.
 
 1. Render : créer le service depuis le dépôt. Render lit `render.yaml` et construit `backend/Dockerfile` ; le build installe les polices depuis le verrou d'empreintes.
 2. Vercel : importer le dépôt, renseigner `BACKEND_URL` avec l'URL Render, redéployer.

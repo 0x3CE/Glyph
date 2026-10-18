@@ -54,11 +54,16 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
+  // Not English pages (/en, /en/...): they're always served as is, so running
+  // the proxy there only cost a function invocation -- and, after a quiet
+  // spell, a ~1 s cold start -- on every page view of most visitors (two
+  // thirds of them are in the US). Left out, they're served straight from
+  // Vercel's cache. The /en branch in `proxy()` stays as a safety net.
   // Pages only: not the backend proxy (/api), Next's own assets, Vercel's
   // own endpoints (/_vercel: Speed Insights posts its reports there, with no
   // file extension), files with an extension (icon.svg, robots.txt,
   // sitemap.xml), or generated images with no extension -- the Open Graph
   // images (which already carry their locale in the path) and the
   // apple-touch-icon.
-  matcher: ["/((?!api/|_next/|_vercel/|.*\\..*|.*opengraph-image|apple-icon).*)"],
+  matcher: ["/((?!api/|_next/|_vercel/|en(?:/|$)|.*\\..*|.*opengraph-image|apple-icon).*)"],
 };

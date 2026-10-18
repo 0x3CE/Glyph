@@ -105,6 +105,7 @@ backend/        # FastAPI + PyMuPDF (the actual editing engine)
 - [`docs/HANDOFF.md`](./docs/HANDOFF.md) — start here to pick the project up or fork it: setup, architecture, engine rules, fonts, security, deployment, known pitfalls (in French).
 - [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — how the frontend and backend fit together.
 - [`docs/API.md`](./docs/API.md) — backend route reference.
+- [`docs/DEPLOY.md`](./docs/DEPLOY.md) — step-by-step guide to run the backend on your own VPS (Hetzner + Docker + Caddy) behind `api.<your-domain>`, with the frontend staying on Vercel (in French).
 - [`docs/DECISIONS.md`](./docs/DECISIONS.md) — the real bugs behind the editing engine's design choices, and why each workaround exists. Good starting point before touching `backend/app/pdf_engine/`.
 
 ## Known limitations

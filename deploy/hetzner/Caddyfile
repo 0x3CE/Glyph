@@ -1,6 +1,21 @@
 # HTTPS for the API subdomain (API_DOMAIN from .env, e.g. api.glyph-pdf.com).
 # Caddy obtains and renews the Let's Encrypt certificate on its own, as soon
 # as the DNS record points to this server and ports 80/443 are open.
+
+{
+	servers {
+		# Keep the visitor's IP that Vercel writes in X-Forwarded-For (Caddy
+		# appends its own hop on the right). Without this, Caddy replaces the
+		# header with the address of whoever connected -- a Vercel server --
+		# so every visitor would look like the same one, and the backend's
+		# per-visitor quota (10 open documents) would apply to the whole site.
+		# Vercel's egress addresses aren't a fixed list, hence "everyone":
+		# someone calling this server directly can forge the header, exactly
+		# as on Render today (see docs/DEPLOY.md, "Plus tard").
+		trusted_proxies static 0.0.0.0/0 ::/0
+	}
+}
+
 {$API_DOMAIN} {
 	encode zstd gzip
 
