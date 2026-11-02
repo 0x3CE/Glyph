@@ -18,6 +18,13 @@ function resolveSiteUrl(): string {
 
 export const SITE_URL = resolveSiteUrl();
 
+// Who publishes the site, for the legal pages. A private individual, not a
+// business: under article 1-1, II of the LCEN they may stay anonymous (their
+// identity is on file with the host). Set a name here to show it instead.
+export const PUBLISHER_NAME: string | null = null;
+// Contact for legal matters: data protection requests, right of reply…
+export const LEGAL_CONTACT_EMAIL = "contact.glyphpdf@pm.me";
+
 // The source code, linked from the footer and the editor: the AGPL asks a
 // network service to offer its source to the people using it.
 export const SOURCE_CODE_URL = "https://github.com/0x3CE/Glyph";

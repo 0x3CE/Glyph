@@ -134,6 +134,9 @@ export const en: Dictionary = {
     guides: "Guides and articles",
     about: "About",
     sourceCode: "Source code (AGPL-3.0)",
+    legalNotice: "Legal notice",
+    privacy: "Privacy",
+    terms: "Terms of use",
   },
   seo: {
     home: "Home",
@@ -143,6 +146,8 @@ export const en: Dictionary = {
     uploadHint: "Your file is processed in memory on Glyph's server, then deleted.",
     termsNotice: "By sending a file, you accept the",
     termsLink: "terms of use",
+    privacyNotice: "See also the",
+    privacyLink: "privacy policy",
   },
   notFound: {
     title: "Page not found",

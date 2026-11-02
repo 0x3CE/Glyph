@@ -27,6 +27,8 @@ export const PAGES = {
   guideFixTypo: { kind: "guide", slug: { fr: "corriger-faute-pdf", en: "fix-typo-in-pdf" } },
   guideWithoutAcrobat: { kind: "guide", slug: { fr: "modifier-pdf-sans-acrobat", en: "edit-pdf-without-acrobat" } },
   guideMac: { kind: "guide", slug: { fr: "modifier-pdf-sur-mac", en: "edit-pdf-on-mac" } },
+  legalNotice: { kind: "legal", slug: { fr: "mentions-legales", en: "legal-notice" } },
+  privacy: { kind: "legal", slug: { fr: "confidentialite", en: "privacy" } },
   terms: { kind: "legal", slug: { fr: "conditions-utilisation", en: "terms" } },
 } as const satisfies Record<string, PageEntry>;
 

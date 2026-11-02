@@ -11,6 +11,7 @@ import { MAX_ZOOM, MIN_ZOOM, usePinchZoom } from "@/components/usePinchZoom";
 import { BrandMark } from "@/components/BrandMark";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { localePath } from "@/lib/i18n";
+import { pagePath } from "@/lib/seo/registry";
 import { SOURCE_CODE_URL } from "@/lib/site";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { takePendingUpload } from "@/lib/pending-upload";
@@ -420,9 +421,14 @@ export function EditorApp() {
               </label>
             </div>
             <p className="empty-hint">{t.editor.emptyHint}</p>
-            <a className="empty-hint source-link" href={SOURCE_CODE_URL} target="_blank" rel="noopener noreferrer">
-              {t.footer.sourceCode}
-            </a>
+            <nav className="empty-hint editor-legal-links" aria-label={t.footer.about}>
+              <Link href={pagePath("privacy", locale)}>{t.footer.privacy}</Link>
+              <Link href={pagePath("terms", locale)}>{t.footer.terms}</Link>
+              <Link href={pagePath("legalNotice", locale)}>{t.footer.legalNotice}</Link>
+              <a href={SOURCE_CODE_URL} target="_blank" rel="noopener noreferrer">
+                {t.footer.sourceCode}
+              </a>
+            </nav>
           </div>
         )}
 

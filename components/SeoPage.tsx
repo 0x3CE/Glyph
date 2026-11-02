@@ -101,7 +101,8 @@ export function SeoPage({ id, locale }: { id: PageId; locale: Locale }) {
         {c.widget === "check" && <PdfChecker locale={locale} />}
         {c.widget && (
           <p className="seo-terms-notice">
-            {t.seo.termsNotice} <Link href={pagePath("terms", locale)}>{t.seo.termsLink}</Link>.
+            {t.seo.termsNotice} <Link href={pagePath("terms", locale)}>{t.seo.termsLink}</Link>. {t.seo.privacyNotice}{" "}
+            <Link href={pagePath("privacy", locale)}>{t.seo.privacyLink}</Link>.
           </p>
         )}
       </section>

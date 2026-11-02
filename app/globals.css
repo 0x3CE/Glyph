@@ -606,8 +606,16 @@ a {
   color: var(--danger);
 }
 
-.source-link {
+.editor-legal-links {
   margin-top: -8px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 14px;
+}
+
+.editor-legal-links a {
+  color: inherit;
   text-underline-offset: 3px;
 }
 

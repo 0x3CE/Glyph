@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 import { LOCALES, localePath } from "@/lib/i18n/config";
 import { isPublished } from "@/lib/seo/content";
-import { PAGE_IDS, pagePath } from "@/lib/seo/registry";
+import { PAGES, PAGE_IDS, pagePath } from "@/lib/seo/registry";
 import { absoluteUrl } from "@/lib/site";
 
 // Every language version of the landing page and of each published content
@@ -22,6 +22,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
     }
   };
   add((l) => localePath(l, "/"), 1);
-  for (const id of PAGE_IDS.filter(isPublished)) add((l) => pagePath(id, l), id === "terms" ? 0.3 : 0.8);
+  for (const id of PAGE_IDS.filter(isPublished)) add((l) => pagePath(id, l), PAGES[id].kind === "legal" ? 0.3 : 0.8);
   return entries;
 }

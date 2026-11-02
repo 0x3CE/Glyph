@@ -137,6 +137,9 @@ export const fr = {
     guides: "Guides et articles",
     about: "À propos",
     sourceCode: "Code source (AGPL-3.0)",
+    legalNotice: "Mentions légales",
+    privacy: "Confidentialité",
+    terms: "Conditions d'utilisation",
   },
   seo: {
     home: "Accueil",
@@ -146,6 +149,8 @@ export const fr = {
     uploadHint: "Ton fichier est traité en mémoire sur le serveur de Glyph, puis supprimé.",
     termsNotice: "En envoyant un fichier, tu acceptes les",
     termsLink: "conditions d'utilisation",
+    privacyNotice: "Voir aussi la",
+    privacyLink: "politique de confidentialité",
   },
   notFound: {
     title: "Page introuvable",

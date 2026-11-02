@@ -5,7 +5,9 @@ import { check } from "./check";
 import { editText } from "./editText";
 import { findReplace } from "./findReplace";
 import { guideFixTypo, guideMac, guideWithoutAcrobat } from "./guides";
+import { legalNotice } from "./legalNotice";
 import { overlayVsReal } from "./overlayVsReal";
+import { privacy } from "./privacy";
 import { redact } from "./redact";
 import { sign } from "./sign";
 import { terms } from "./terms";
@@ -23,6 +25,8 @@ export const CONTENT: Partial<Record<PageId, LocalizedContent>> = {
   guideFixTypo,
   guideWithoutAcrobat,
   guideMac,
+  legalNotice,
+  privacy,
   terms,
 };
 
